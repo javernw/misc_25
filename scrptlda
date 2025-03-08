@@ -112,3 +112,50 @@ df_dominant_topic.columns = ['Document_No', 'Dominant_Topic', 'Topic_Perc_Contri
 
 # Display the result
 df_dominant_topic.head(10)
+
+
+
+import pandas as pd
+
+def find_dominant_topic(ldamodel, corpus, texts):
+    """
+    Finds the dominant topic in each document based on the highest probability.
+
+    Parameters:
+        ldamodel: Trained LDA model.
+        corpus: Corpus used for training the LDA model.
+        texts: List of original text documents.
+
+    Returns:
+        DataFrame with the dominant topic, its percentage contribution, keywords, and the original text.
+    """
+    # Initialize a list to store the results
+    dominant_topics = []
+
+    # Iterate through each document's topic distribution
+    for i, row in enumerate(ldamodel[corpus]):
+        # Filter to ensure each element in row is a tuple of length 2
+        row = [item for item in row if isinstance(item, tuple) and len(item) == 2]
+
+        # Sort the topics in descending order of probability
+        if len(row) > 0:
+            row = sorted(row, key=lambda x: x[1], reverse=True)
+
+            # Get the dominant topic, its probability, and the topic's keywords
+            dominant_topic_num, topic_prob = row[0]
+            topic_keywords = ", ".join([word for word, prop in ldamodel.show_topic(dominant_topic_num)])
+
+            # Append the results to the list
+            dominant_topics.append((i, int(dominant_topic_num), round(topic_prob, 4), topic_keywords, texts[i]))
+
+    # Create a DataFrame with the results
+    df_dominant_topics = pd.DataFrame(dominant_topics, columns=['Document_No', 'Dominant_Topic', 'Topic_Perc_Contrib', 'Keywords', 'Text'])
+
+    return df_dominant_topics
+
+# Example usage
+df_dominant_topic = find_dominant_topic(ldamodel=optimal_model, corpus=corpus, texts=data)
+
+# Display the result
+df_dominant_topic.head(10)
+
