@@ -278,30 +278,27 @@ most_representative_docs.columns = ['Topic_Num', 'Topic_Perc_Contrib', 'Keywords
 print(most_representative_docs.head())
 
 
+import pandas as pd
+
 # Number of Documents for Each Topic
-topic_counts = df_topic_sents_keywords['Dominant_Topic'].value_counts()
+topic_counts = df_dominant_topic['Dominant_Topic'].value_counts()
 
 # Percentage of Documents for Each Topic
 topic_contribution = round(topic_counts / topic_counts.sum(), 4)
 
-# Topic Number and Keywords (Drop Duplicates to Keep One Set of Keywords Per Topic)
-topic_num_keywords = df_topic_sents_keywords[['Dominant_Topic', 'Topic_Keywords']].drop_duplicates(subset=['Dominant_Topic'])
+# Topic Number and Keywords (taking the first occurrence of each topic)
+topic_num_keywords = df_dominant_topic[['Dominant_Topic', 'Keywords']].drop_duplicates(subset=['Dominant_Topic'])
 
-# Concatenate column-wise to create a summary DataFrame
-df_dominant_topics = pd.concat([topic_num_keywords.set_index('Dominant_Topic'), topic_counts, topic_contribution], axis=1).reset_index()
+# Merge topic keywords with counts and contribution
+df_dominant_topics = topic_num_keywords.merge(topic_counts.rename('Num_Documents'), on='Dominant_Topic')
+df_dominant_topics = df_dominant_topics.merge(topic_contribution.rename('Perc_Documents'), on='Dominant_Topic')
 
-# Rename Columns for Clarity
-df_dominant_topics.columns = ['Dominant_Topic', 'Topic_Keywords', 'Num_Documents', 'Perc_Documents']
+# Sort by the number of documents
+df_dominant_topics = df_dominant_topics.sort_values(by='Num_Documents', ascending=False).reset_index(drop=True)
 
-# Sort by Number of Documents (Descending) to show most frequent topics first
-df_dominant_topics = df_dominant_topics.sort_values(by='Num_Documents', ascending=False)
+# Show the final topic distribution DataFrame
+print(df_dominant_topics)
 
-# Show the topic statistics
-print(df_dominant_topics.head())
-
-# Optional: Save the topic distribution summary to CSV
-df_dominant_topics.to_csv("topic_summary.csv", index=False)
-print("Topic summary saved as topic_summary.csv")
 
 
 
