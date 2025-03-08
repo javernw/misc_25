@@ -254,6 +254,30 @@ df_dominant_topic = find_dominant_topic(ldamodel=optimal_model, corpus=corpus, t
 df_dominant_topic.head(10)
 
 
+import pandas as pd
+
+# Initialize an empty DataFrame to store the most representative document for each topic
+most_representative_docs = pd.DataFrame()
+
+# Group by 'Dominant_Topic' to get the most representative document per topic
+topic_groups = df_dominant_topic.groupby('Dominant_Topic')
+
+for topic, group in topic_groups:
+    # Select the document with the highest topic percentage contribution
+    most_representative_docs = pd.concat([most_representative_docs, 
+                                          group.sort_values(['Topic_Perc_Contrib'], ascending=False).head(1)], 
+                                         axis=0)
+
+# Reset index
+most_representative_docs.reset_index(drop=True, inplace=True)
+
+# Format column names
+most_representative_docs.columns = ['Topic_Num', 'Topic_Perc_Contrib', 'Keywords', 'Text']
+
+# Show the most representative document per topic
+print(most_representative_docs.head())
+
+
 
 
 
