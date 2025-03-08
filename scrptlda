@@ -278,6 +278,30 @@ most_representative_docs.columns = ['Topic_Num', 'Topic_Perc_Contrib', 'Keywords
 print(most_representative_docs.head())
 
 
+# Number of Documents for Each Topic
+topic_counts = df_topic_sents_keywords['Dominant_Topic'].value_counts()
+
+# Percentage of Documents for Each Topic
+topic_contribution = round(topic_counts / topic_counts.sum(), 4)
+
+# Topic Number and Keywords (Drop Duplicates to Keep One Set of Keywords Per Topic)
+topic_num_keywords = df_topic_sents_keywords[['Dominant_Topic', 'Topic_Keywords']].drop_duplicates(subset=['Dominant_Topic'])
+
+# Concatenate column-wise to create a summary DataFrame
+df_dominant_topics = pd.concat([topic_num_keywords.set_index('Dominant_Topic'), topic_counts, topic_contribution], axis=1).reset_index()
+
+# Rename Columns for Clarity
+df_dominant_topics.columns = ['Dominant_Topic', 'Topic_Keywords', 'Num_Documents', 'Perc_Documents']
+
+# Sort by Number of Documents (Descending) to show most frequent topics first
+df_dominant_topics = df_dominant_topics.sort_values(by='Num_Documents', ascending=False)
+
+# Show the topic statistics
+print(df_dominant_topics.head())
+
+# Optional: Save the topic distribution summary to CSV
+df_dominant_topics.to_csv("topic_summary.csv", index=False)
+print("Topic summary saved as topic_summary.csv")
 
 
 
