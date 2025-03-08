@@ -1,0 +1,114 @@
+import pandas as pd
+import gensim
+from gensim import corpora
+from gensim.models import CoherenceModel, LdaModel
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import nltk
+import itertools
+
+# Download NLTK resources
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Load the data
+input_file = 'data.csv'  # Path to the CSV file
+text_column = 'text'     # Column name containing the text
+df = pd.read_csv(input_file)
+
+# Preprocess the text data
+stop_words = set(stopwords.words('english'))
+
+def preprocess_text(text):
+    # Tokenize the text
+    tokens = word_tokenize(text.lower())
+    # Remove stop words and non-alphabetic tokens
+    tokens = [word for word in tokens if word.isalpha() and word not in stop_words]
+    return tokens
+
+processed_texts = [preprocess_text(text) for text in df[text_column].dropna()]
+
+# Create a dictionary and a corpus
+dictionary = corpora.Dictionary(processed_texts)
+corpus = [dictionary.doc2bow(text) for text in processed_texts]
+
+# Function to compute coherence score for LDA model
+def compute_coherence_score(corpus, dictionary, num_topics, alpha, eta):
+    lda_model = LdaModel(corpus=corpus, num_topics=num_topics, id2word=dictionary, passes=10, alpha=alpha, eta=eta, random_state=0)
+    coherence_model = CoherenceModel(model=lda_model, texts=processed_texts, dictionary=dictionary, coherence='c_v')
+    coherence_score = coherence_model.get_coherence()
+    return coherence_score
+
+# Parameter grid
+num_topics_list = [5, 10, 15]  # Number of topics to try
+alpha_list = ['symmetric', 'asymmetric']  # Alpha parameter
+eta_list = ['symmetric', None]  # Eta parameter
+
+# Perform grid search
+best_coherence = 0
+best_params = None
+
+for num_topics, alpha, eta in itertools.product(num_topics_list, alpha_list, eta_list):
+    coherence_score = compute_coherence_score(corpus, dictionary, num_topics, alpha, eta)
+    print(f"Num Topics: {num_topics}, Alpha: {alpha}, Eta: {eta}, Coherence Score: {coherence_score:.4f}")
+    
+    if coherence_score > best_coherence:
+        best_coherence = coherence_score
+        best_params = (num_topics, alpha, eta)
+
+# Print the best parameters
+print("\nBest Model Parameters:")
+print(f"Number of Topics: {best_params[0]}")
+print(f"Alpha: {best_params[1]}")
+print(f"Eta: {best_params[2]}")
+print(f"Best Coherence Score: {best_coherence:.4f}")
+
+
+
+import pandas as pd
+
+def format_topics_sentences(ldamodel, corpus, texts):
+    # Initialize output dataframe
+    sent_topics_df = pd.DataFrame()
+
+    # Get the main topic for each document
+    for i, row in enumerate(ldamodel[corpus]):
+        if isinstance(row, list):  # Check if row is a list
+            row = sorted(row, key=lambda x: (x[1]), reverse=True)
+            # Get the Dominant topic, Perc Contribution, and Keywords for each document
+            for j, (topic_num, prop_topic) in enumerate(row):
+                if j == 0:  # The dominant topic
+                    wp = ldamodel.show_topic(topic_num)
+                    topic_keywords = ", ".join([word for word, prop in wp])
+                    sent_topics_df = sent_topics_df.append(
+                        pd.Series([int(topic_num), round(prop_topic, 4), topic_keywords]),
+                        ignore_index=True
+                    )
+                else:
+                    break
+        else:
+            # If row is not a list, handle the case accordingly
+            topic_num, prop_topic = row
+            wp = ldamodel.show_topic(topic_num)
+            topic_keywords = ", ".join([word for word, prop in wp])
+            sent_topics_df = sent_topics_df.append(
+                pd.Series([int(topic_num), round(prop_topic, 4), topic_keywords]),
+                ignore_index=True
+            )
+
+    sent_topics_df.columns = ['Dominant_Topic', 'Perc_Contribution', 'Topic_Keywords']
+
+    # Add the original text to the output
+    contents = pd.Series(texts)
+    sent_topics_df = pd.concat([sent_topics_df, contents], axis=1)
+    return sent_topics_df
+
+# Example usage
+df_topic_sents_keywords = format_topics_sentences(ldamodel=optimal_model, corpus=corpus, texts=data)
+
+# Format the dataframe
+df_dominant_topic = df_topic_sents_keywords.reset_index()
+df_dominant_topic.columns = ['Document_No', 'Dominant_Topic', 'Topic_Perc_Contrib', 'Keywords', 'Text']
+
+# Display the result
+df_dominant_topic.head(10)
