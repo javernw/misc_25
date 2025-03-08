@@ -159,3 +159,19 @@ df_dominant_topic = find_dominant_topic(ldamodel=optimal_model, corpus=corpus, t
 # Display the result
 df_dominant_topic.head(10)
 
+
+
+def topic_diversity(lda_model, top_n=10):
+    # Get all top N words from each topic
+    top_words_per_topic = [word for topic_id in range(lda_model.num_topics) for word, _ in lda_model.show_topic(topic_id, topn=top_n)]
+    unique_top_words = set(top_words_per_topic)
+    
+    # Calculate topic diversity
+    diversity = len(unique_top_words) / len(top_words_per_topic)
+    return diversity
+
+# Calculate topic diversity for the top 10 words
+diversity = topic_diversity(lda_model, top_n=10)
+print(f"Topic Diversity: {diversity:.2f}")
+
+
