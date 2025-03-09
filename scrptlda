@@ -315,4 +315,54 @@ def topic_diversity(lda_model, top_n=10):
 diversity = topic_diversity(lda_model, top_n=10)
 print(f"Topic Diversity: {diversity:.2f}")
 
+# Updated XML Sample with Multiple Entries
+xml_strings = [
+    """<form>
+        <metadata></metadata>
+        <field name="apples" type="string"><value>Apples are great</value></field>
+        <field name="oranges" type="string"><value>I love oranges</value></field>
+        <field name="bananas" type="string"><value>Bananas are tasty</value></field>
+    </form>""",
+    
+    """<form>
+        <metadata></metadata>
+        <field name="apples" type="string"><value>Green apples are sour</value></field>
+        <field name="oranges" type="string"><value>Oranges are juicy</value></field>
+        <field name="bananas" type="string"><value>Bananas are rich in potassium</value></field>
+    </form>"""
+]
+
+# Function to Extract All Fields and Values for Each XML String and Transpose
+def extract_and_transpose_multiple(xml_list):
+    extracted_data_list = []
+
+    for xml_string in xml_list:
+        try:
+            root = ET.fromstring(xml_string)
+            extracted_data = {}
+
+            # Loop through all <field> elements
+            for field in root.findall("field"):
+                field_name = field.get("name")  # Get field name attribute
+                value_element = field.find("value")  # Find <value> tag
+                field_value = value_element.text if value_element is not None else None
+
+                # Store extracted data in dictionary format
+                extracted_data[field_name] = field_value
+
+            # Append to list as a row of data
+            extracted_data_list.append(extracted_data)
+
+        except ET.ParseError:
+            print("Error: Invalid XML format")
+
+    # Convert list of dictionaries to DataFrame (each XML entry as a row)
+    df = pd.DataFrame(extracted_data_list)
+    return df
+
+# Extract Data from Multiple XML Strings and Create Transposed Table
+df_transposed_multiple = extract_and_transpose_multiple(xml_strings)
+
+
+
 
