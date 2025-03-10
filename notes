@@ -1,0 +1,73 @@
+### **Cleaned Notes: Financial Crime Risk Scenarios & Data Access**  
+
+#### **Risk Scenarios & SAM8 Coverage**  
+- **9 risk scenarios identified** – All covered by SAM8, but two have only partial coverage.  
+- **Human Trafficking** – Need to remain cautious regarding SAM8 coverage.  
+
+#### **Data Access & Sources**  
+- **US Data Access:** Limited to **Card data**; discussions focused only on card-related features.  
+- **Loan & Deposit Data:** To be confirmed (TBC).  
+- **Data Source Status:**
+  - **Orange** – Data source information available (e.g., Customer Table, which includes KYC data but contains PII and will be tokenized first). Need to determine the level of usage—currently under discussion.  
+  - **Green** – **No access** to these data sources.  
+  - **Blue** – **Already have access in AWS**.  
+
+#### **Customer & Account Data**  
+- **Customer Bureau Information:** Available only for existing customers. Updated data exists in Bs, but features have not yet been created.  
+- **Customer Account Linkage:** Customers can have multiple accounts, but each account may have multiple users (e.g., primary and secondary).  
+- **Account Data Includes:**
+  - Credit limit  
+  - Balance information  
+  - Fees  
+  - Available credit  
+
+#### **Additional Data Considerations**  
+- **Airline Ticket Data:** Includes departure/arrival airport details.  
+- **Validation Needed:** Confirm if all airline card types are included or only certain partner-issued cards.  
+- **Customer Watchlist:** **Not available**.  
+- **SAM8 Alert & SAR Info:** Full access available, except within AWS.  
+- **SAR Reporting Preference:** Initial SARs preferred over continuing SARs.  
+
+#### **Credit Risk & Income Modeling**  
+- **US Credit Risk Income Model:** Maintained, but data resides in Hadoop. Uncertainty about when AWS access will be granted for Quant teams.  
+- **Income Estimation:**
+  - If customer-provided income data is available, use the last 12 months.  
+  - If unavailable, the model will generate income estimates using Customer Bureau data and save the calculated income for the customer.  
+
+#### **Feature Engineering Considerations**  
+- **Primary Data Used:**  
+  - Account and Transaction data  
+  - Customer, Airline Ticket, Authorization, and Application data (newly accessed; team needs time to explore before building features).  
+- **Account Features:**
+  - **Credit limit utilization**  
+  - **Transaction patterns**:
+    - Average, Max, and Sum of transactions per month  
+    - Trends over **Last 30, 60 days, 6 months**, etc.  
+    - Total credit usage over **N days**  
+  - **Transaction Amount Considerations:**  
+    - Transactions ending in whole dollar amounts vs. amounts like **$X.95** (possible indicator of gift card purchases).  
+    - Gift card purchases may be identified via merchant information.  
+- **Non-Domestic Transactions:**  
+  - Transactions occurring in **high-risk countries**.  
+- **Payment Behavior & Source Tracking:**  
+  - **Self vs. Third-Party Payments:** Cannot determine if a customer is paying or if someone else is making the payment on their behalf.  
+  - **Available Insights:**  
+    - Can identify the **bank name** but **not the owner** of the payment source.  
+    - Payee details are available.  
+  - **Missing Bank Name:**  
+    - Payment may not be coming directly from a bank.  
+    - May originate from alternative sources (e.g., **cash payments via third-party services**).  
+  - **Smurfing vs. Structuring:**  
+    - **Smurfing** – Involves multiple people.  
+    - **Structuring** – Involves a single person breaking transactions into smaller amounts.  
+
+#### **Fraud & Bust-Out Patterns**  
+- **Bust-Out Fraud Indicators:**  
+  - Patterns of **bad payments** over time.  
+  - Customers making multiple payments that repeatedly fail before the account is closed.  
+- **Identifying Self vs. Third-Party Transfers:**  
+  - Cannot determine if a customer is sending funds to their own account (e.g., PayPal) or to someone else.  
+  - Merchant details available but may not indicate recipient identity.  
+  - **Potential Solution:** KYC data—if accounts are tied to a nickname/alias, this might provide additional insights.  
+
+Would you like me to refine any specific section further?
