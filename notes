@@ -70,4 +70,30 @@
   - Merchant details available but may not indicate recipient identity.  
   - **Potential Solution:** KYC data—if accounts are tied to a nickname/alias, this might provide additional insights.  
 
-Would you like me to refine any specific section further?
+
+
+**Subject:** Clarification on Identifying Payment Source Ownership  
+
+Hi [Recipient’s Name],  
+
+I hope you're doing well.  
+
+I’m looking for clarification on how we can determine the ownership of a payment source. Currently, we can identify the **bank name** associated with a payment, but we are unable to distinguish **who owns the account** that made the payment. Specifically, we cannot determine:  
+
+- Whether the payment was made by the customer themselves or by a third party on their behalf.  
+- The exact owner of the payment source (i.e., account holder details).  
+- If there are any patterns or indicators we can use to infer ownership.  
+
+However, we are able to see **who the payee is** in the transaction.  
+
+Would you be able to provide any insights on:  
+1. **Whether there are existing data points or methods** we could use to infer payment ownership?  
+2. **Any additional data sources** that might contain relevant information on the account holder?  
+3. **Possible flags or indicators** that could help differentiate between self-payments and third-party payments?  
+
+Appreciate any guidance you can provide. Looking forward to your thoughts.  
+
+Best,  
+[Your Name]  
+[Your Role]  
+[Your Contact Information]
