@@ -1,0 +1,59 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, unix_timestamp, datediff, sum as _sum
+from pyspark.sql.window import Window
+
+# Initialize Spark session
+spark = SparkSession.builder.master("local").appName("MirrorTrading").getOrCreate()
+
+# Sample schema: customer_id, security_id, transaction_type (buy/sell), amount, date
+# You can replace this with loading your data
+data = [
+    ("customer_a", "security_1", "buy", 1000, "2025-02-01"),
+    ("customer_b", "security_1", "sell", 950, "2025-02-02"),
+    ("customer_a", "security_1", "buy", 1200, "2025-02-04"),
+    ("customer_b", "security_1", "sell", 1100, "2025-02-05"),
+    # Add more sample data here
+]
+
+# Create DataFrame from data
+df = spark.createDataFrame(data, ["customer_id", "security_id", "transaction_type", "amount", "date"])
+
+# Convert date column to proper date format
+df = df.withColumn("date", unix_timestamp("date", "yyyy-MM-dd").cast("timestamp"))
+
+# Create a self-join to check for mirror trading conditions
+# Join on security_id, but customers must not be the same
+df_joined = df.alias("df1").join(df.alias("df2"),
+                                 (df["security_id"] == df["df2.security_id"]) &
+                                 (df["customer_id"] != df["df2.customer_id"]),
+                                 "inner")
+
+# Add a column to calculate the difference in dates for the same security_id
+df_joined = df_joined.withColumn("date_diff", datediff("df2.date", "df1.date"))
+
+# Filter the rows where the date difference is within 5 days
+df_joined = df_joined.filter((col("date_diff") >= 0) & (col("date_diff") <= 5))
+
+# Filter for opposite transaction types (buy/sell)
+df_joined = df_joined.filter(((col("df1.transaction_type") == "buy") & (col("df2.transaction_type") == "sell")) |
+                             ((col("df1.transaction_type") == "sell") & (col("df2.transaction_type") == "buy")))
+
+# Calculate the notional ratio
+df_joined = df_joined.withColumn("notional_ratio", 
+                                 col("df1.amount") / col("df2.amount"))
+
+# Filter for notional ratio between 90% and 110%
+df_joined = df_joined.filter((col("notional_ratio") >= 0.9) & (col("notional_ratio") <= 1.1))
+
+# For each customer, get the aggregate sum of amounts (buy or sell) within 5 days
+df_aggregated = df_joined.groupBy("df1.customer_id", "df1.security_id", "df1.date") \
+    .agg(
+        _sum("df1.amount").alias("buy_amount"),
+        _sum("df2.amount").alias("sell_amount")
+    )
+
+# Show the results
+df_aggregated.show()
+
+# Stop Spark session
+spark.stop()
