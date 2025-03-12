@@ -57,3 +57,69 @@ df_aggregated.show()
 
 # Stop Spark session
 spark.stop()
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, sum as _sum, unix_timestamp
+from pyspark.sql.window import Window
+from pyspark.sql import functions as F
+
+# Initialize Spark session
+spark = SparkSession.builder.master("local[*]").appName("MirrorTradingDetection").getOrCreate()
+
+# Sample data
+data = [
+    ("customer_a", "2025-03-01", "SEC1", "buy", 1000),
+    ("customer_b", "2025-03-01", "SEC1", "sell", 950),
+    ("customer_a", "2025-03-02", "SEC1", "buy", 1100),
+    ("customer_b", "2025-03-02", "SEC1", "sell", 1050),
+    ("customer_a", "2025-03-03", "SEC1", "buy", 1050),
+    ("customer_b", "2025-03-03", "SEC1", "sell", 1000),
+    # More rows can be added here
+]
+
+# Define schema and create DataFrame
+columns = ["customer_id", "trade_date", "security_id", "trade_type", "notional_value"]
+df = spark.createDataFrame(data, columns)
+
+# Convert trade_date to timestamp for easier manipulation
+df = df.withColumn("trade_date", unix_timestamp(col("trade_date"), "yyyy-MM-dd").cast("timestamp"))
+
+# Define window for 5-day lookback per customer and security
+window_spec = Window.partitionBy("security_id", "customer_id").orderBy("trade_date")
+
+# Add column for the 5-day lookback for aggregate sum
+df = df.withColumn("five_day_window", F.sum("notional_value").over(window_spec.rangeBetween(-4, 0)))
+
+# Self-join the DataFrame to compare each customer's trades with the other
+mirror_trading_df = df.alias("df_a") \
+    .join(df.alias("df_b"), (col("df_a.security_id") == col("df_b.security_id")) & 
+          (col("df_a.customer_id") != col("df_b.customer_id")), "inner") \
+    .filter((col("df_a.trade_date") <= col("df_b.trade_date")) & 
+            (col("df_a.trade_date") >= (col("df_b.trade_date") - F.expr("INTERVAL 5 DAYS"))))
+
+# Compute the absolute difference in notional value between customers A and B
+mirror_trading_df = mirror_trading_df.withColumn("notional_diff", 
+                                                 (col("df_a.notional_value") / col("df_b.notional_value")).cast("double"))
+
+# Check if the notional value difference is within 90%-110% range
+mirror_trading_df = mirror_trading_df.withColumn("notional_check", 
+                                                 when((col("notional_diff") >= 0.9) & (col("notional_diff") <= 1.1), 1).otherwise(0))
+
+# Filter for trades with 3 or more instances within the 30-day window
+window_spec_30_day = Window.partitionBy("security_id", "customer_id").rangeBetween(-30 * 24 * 60 * 60, 0)
+mirror_trading_df = mirror_trading_df.withColumn("count_within_30_days", 
+                                                 F.count("df_a.trade_date").over(window_spec_30_day))
+
+# Filter the results to find instances where customers are trading in opposite directions (buy/sell)
+mirror_trading_df = mirror_trading_df.filter((col("df_a.trade_type") != col("df_b.trade_type")) & 
+                                              (col("notional_check") == 1) & 
+                                              (col("count_within_30_days") >= 3))
+
+# Select relevant columns and show the results
+result_df = mirror_trading_df.select("df_a.customer_id", "df_a.trade_date", "df_a.security_id", 
+                                     "df_a.trade_type", "df_a.notional_value", "df_b.customer_id", 
+                                     "df_b.trade_date", "df_b.trade_type", "df_b.notional_value")
+
+# Display the result
+result_df.show(truncate=False)
