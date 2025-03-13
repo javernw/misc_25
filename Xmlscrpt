@@ -91,3 +91,45 @@ df_transposed = extract_and_transpose(xml_string)
 
 # Display the Transposed DataFrame as a Table
 tools.display_dataframe_to_user(name="Transposed XML Fields", dataframe=df_transposed)
+
+
+import matplotlib.pyplot as plt
+
+# Creating the slide layout
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.set_xlim(0, 12)
+ax.set_ylim(0, 10)
+ax.axis("off")
+
+# Title
+ax.text(6, 9.5, "Risk Indicator Library: Standardizing Risk Coverage", fontsize=14, fontweight="bold", ha="center")
+
+# Key formula flow (Visual Hierarchy)
+ax.text(2, 7.5, "Pattern of Behavior", fontsize=12, fontweight="bold", ha="center", bbox=dict(facecolor='lightblue', edgecolor='black', boxstyle='round,pad=0.5'))
+ax.text(6, 7.5, "Enabler", fontsize=12, fontweight="bold", ha="center", bbox=dict(facecolor='lightblue', edgecolor='black', boxstyle='round,pad=0.5'))
+ax.text(10, 7.5, "Risk Factor", fontsize=12, fontweight="bold", ha="center", bbox=dict(facecolor='lightblue', edgecolor='black', boxstyle='round,pad=0.5'))
+
+# Multiplication symbols
+ax.text(4, 7.5, "×", fontsize=14, fontweight="bold", ha="center")
+ax.text(8, 7.5, "×", fontsize=14, fontweight="bold", ha="center")
+
+# Equals sign and Features Box
+ax.text(11, 7.5, "=", fontsize=14, fontweight="bold", ha="center")
+ax.text(11.5, 7.5, "Features", fontsize=12, fontweight="bold", ha="center", bbox=dict(facecolor='blue', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.5))
+
+# Adding examples under each category
+ax.text(2, 6.5, "- Excessive usage vs peers\n- Unusual past usage\n- Rapid movement", fontsize=10, ha="center")
+ax.text(6, 6.5, "- Cash\n- Wire Transfers\n- Crypto", fontsize=10, ha="center")
+ax.text(10, 6.5, "- High-risk jurisdictions\n- High-risk industries\n- PEP flag", fontsize=10, ha="center")
+
+# Key Considerations Section
+ax.text(6, 4.5, "Key Considerations", fontsize=12, fontweight="bold", ha="center")
+ax.text(6, 3.8, "✔ Ensure enablers align with product families & payment rails\n"
+                 "✔ Indicators align with MLRO, TMRA, FinCrime insights\n"
+                 "✔ Consider alternative risk coverage methods for explainability", fontsize=10, ha="center")
+
+# Footer
+ax.text(6, 1, "Draft for Discussion | Work in Progress", fontsize=10, color='red', ha="center")
+
+# Display the redesigned slide
+plt.show()
