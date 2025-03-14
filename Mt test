@@ -205,3 +205,87 @@ final_result_df = final_result_df.select(
 # Show results
 final_result_df.show(truncate=False)
 
+
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+
+# Initialize Spark session
+spark = SparkSession.builder.master("local[*]").appName("MirrorTradingDetection").getOrCreate()
+
+# Sample Data
+data = [
+    ("customer_a", "2025-03-01", "SEC1", "buy", 1000),
+    ("customer_b", "2025-03-01", "SEC1", "sell", 950),
+    ("customer_a", "2025-03-02", "SEC1", "buy", 1100),
+    ("customer_b", "2025-03-02", "SEC1", "sell", 1050),
+    ("customer_a", "2025-03-03", "SEC1", "buy", 1050),
+    ("customer_b", "2025-03-03", "SEC1", "sell", 1000),
+    ("customer_a", "2025-03-10", "SEC1", "buy", 1030),
+    ("customer_b", "2025-03-10", "SEC1", "sell", 1010),
+    ("customer_a", "2025-03-15", "SEC1", "buy", 1040),
+    ("customer_b", "2025-03-15", "SEC1", "sell", 1025),
+]
+
+# Define schema and create DataFrame
+columns = ["customer_id", "trade_date", "security_id", "trade_type", "notional_value"]
+df = spark.createDataFrame(data, columns)
+
+# Convert trade_date to date format
+df = df.withColumn("trade_date", F.to_date("trade_date", "yyyy-MM-dd"))
+
+# Aggregate sum of notional values within a 5-day rolling window for each customer & security
+df_agg = df.alias("df1").join(
+    df.alias("df2"),
+    (F.col("df1.security_id") == F.col("df2.security_id")) &
+    (F.col("df1.customer_id") == F.col("df2.customer_id")) &
+    (F.col("df1.trade_date") >= F.col("df2.trade_date")) &
+    (F.col("df1.trade_date") <= F.col("df2.trade_date") + F.expr("INTERVAL 5 DAYS")),
+    "inner"
+).groupBy("df1.customer_id", "df1.trade_date", "df1.security_id", "df1.trade_type") \
+ .agg(F.sum("df1.notional_value").alias("aggregate_notional_value"))
+
+# Self-join on security_id to find mirror trades within the 5-day window
+mirror_trading_df = df_agg.alias("df_a") \
+    .join(df_agg.alias("df_b"), 
+          (F.col("df_a.security_id") == F.col("df_b.security_id")) & 
+          (F.col("df_a.customer_id") != F.col("df_b.customer_id")), 
+          "inner") \
+    .filter(
+        (F.col("df_a.trade_date") >= F.col("df_b.trade_date")) & 
+        (F.col("df_a.trade_date") <= F.col("df_b.trade_date") + F.expr("INTERVAL 5 DAYS"))
+    ) \
+    .filter(F.col("df_a.trade_type") != F.col("df_b.trade_type"))  # Buy vs Sell
+
+# Compute the ratio of aggregate notional values
+mirror_trading_df = mirror_trading_df.withColumn("notional_ratio", 
+    (F.col("df_a.aggregate_notional_value") / F.col("df_b.aggregate_notional_value")).cast("double"))
+
+# Check if the notional value ratio is within 90%-110%
+mirror_trading_df = mirror_trading_df.filter(
+    (F.col("notional_ratio") >= 0.9) & (F.col("notional_ratio") <= 1.1)
+)
+
+# Count trades per customer pair within 30 days
+trade_count_df = mirror_trading_df.groupBy("df_a.security_id", "df_a.customer_id", "df_b.customer_id") \
+    .agg(F.count("*").alias("mirror_trade_count"))
+
+# Filter for customer pairs with at least 3 mirror trading instances
+trade_count_df = trade_count_df.filter(F.col("mirror_trade_count") >= 3)
+
+# Join back to get full details of those trades
+final_result_df = mirror_trading_df.join(trade_count_df, 
+                                         on=["security_id", "df_a.customer_id", "df_b.customer_id"], 
+                                         how="inner")
+
+# Select relevant columns for final output
+final_result_df = final_result_df.select(
+    "df_a.customer_id", "df_a.trade_date", "df_a.security_id",
+    "df_a.trade_type", "df_a.aggregate_notional_value", "df_b.customer_id",
+    "df_b.trade_date", "df_b.trade_type", "df_b.aggregate_notional_value",
+    "mirror_trade_count"
+)
+
+# Show results
+final_result_df.show(truncate=False)
+
+
