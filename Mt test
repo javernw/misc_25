@@ -123,3 +123,13 @@ result_df = mirror_trading_df.select("df_a.customer_id", "df_a.trade_date", "df_
 
 # Display the result
 result_df.show(truncate=False)
+
+
+condition = (
+    (col("currencyStatus1") != col("currencyStatus2")) & 
+    (
+        ((col("buyorsell2_1") == "SELL") | (col("buyorsell2_2") == "SELL")) & 
+        ((col("currencyStatus1") == "restricted") | (col("currencyStatus2") == "restricted"))
+    )
+)
+
