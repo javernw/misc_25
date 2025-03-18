@@ -332,3 +332,59 @@ for df in results[1:]:
 # Show final output
 final_df.show()
 
+
+
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+
+# Initialize Spark Session
+spark = SparkSession.builder.master("local[*]").appName("MirrorTradingLoop").getOrCreate()
+
+# List of customer pairs and their respective unique date ranges
+customer_pairs = ["cust1_cust2", "cust3_cust4", "cust5_cust6"]
+
+# Assign unique date ranges to each customer pair dynamically
+customer_date_ranges = {
+    tuple(pair.split("_")): date_range for pair, date_range in zip(
+        customer_pairs, 
+        [("2024-08-18", "2024-08-23"), ("2024-09-01", "2024-09-05"), ("2024-09-20", "2024-09-25")]  # Unique date ranges
+    )
+}
+
+# Placeholder list to store results
+results = []
+
+# Loop through each customer pair and their respective date range
+for (customer1, customer2), (start_date, end_date) in customer_date_ranges.items():
+    
+    # Filter data within the current customer pair and their date range
+    mt_eval_df = df.filter(
+        (F.col("customer_id").isin([customer1, customer2])) &  # Match the customer pair
+        (F.col("businessdate").between(start_date, end_date))  # Match their assigned date range
+    ).groupBy("customer_id", "security_id", "buyorsell2") \
+     .agg(F.sum("amountusd").alias("agg_notional_value"))
+
+    # Self-join for mirror trade evaluation within the same security
+    mt_data_df = mt_eval_df.alias("MT_a").join(
+        mt_eval_df.alias("MT_b"),
+        (F.col("MT_a.security_id") == F.col("MT_b.security_id")) &
+        (F.col("MT_a.customer_id") != F.col("MT_b.customer_id")),  # Ensuring it's a trade between different customers
+        "inner"
+    ).withColumn("customer_pair", F.lit(f"{customer1} & {customer2}")) \
+     .withColumn("date_range", F.lit(f"{start_date} to {end_date}"))
+
+    # Append the result to the list
+    results.append(mt_data_df)
+
+# Union all results into one DataFrame if results exist
+if results:
+    final_df = results[0]  # Start with the first result
+    for df in results[1:]:
+        final_df = final_df.union(df)  # Append subsequent results
+
+    # Show final output
+    final_df.show(truncate=False)
+else:
+    print("No matching data found for the given customer pairs and date ranges.")
+
+
