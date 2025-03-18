@@ -288,4 +288,47 @@ final_result_df = final_result_df.select(
 # Show results
 final_result_df.show(truncate=False)
 
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+
+# Initialize Spark Session
+spark = SparkSession.builder.master("local[*]").appName("MirrorTradingLoop").getOrCreate()
+
+# Sample list of date ranges (each tuple represents a start and end date)
+date_ranges = [
+    ("2024-08-18", "2024-08-23"),
+    ("2024-08-25", "2024-08-30"),
+    ("2024-09-01", "2024-09-05")
+]
+
+# Placeholder list to store results from each iteration
+results = []
+
+# Loop through each date range and execute the query
+for start_date, end_date in date_ranges:
+    # Filter data within the current date range
+    mt_eval_df = df.filter(F.col("security_id") == "H574748") \
+                   .filter(F.col("businessdate").between(start_date, end_date)) \
+                   .filter(F.col("IDAgg").isin([1010, 1005])) \
+                   .groupBy("IDAgg", "security_id", "buyorsell2") \
+                   .agg(F.sum("amountusd").alias("agg_notional_value"))
+
+    # Self-join for mirror trade evaluation
+    mt_data_df = mt_eval_df.alias("MT_a").join(
+        mt_eval_df.alias("MT_b"),
+        (F.col("MT_a.security_id") == F.col("MT_b.security_id")) &
+        (F.col("MT_a.IDAgg") != F.col("MT_b.IDAgg")),
+        "inner"
+    )
+
+    # Append the result to the list
+    results.append(mt_data_df)
+
+# Union all results into one DataFrame
+final_df = results[0]  # Start with the first result
+for df in results[1:]:
+    final_df = final_df.union(df)  # Append subsequent results
+
+# Show final output
+final_df.show()
 
