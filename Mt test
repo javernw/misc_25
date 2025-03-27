@@ -482,3 +482,47 @@ def find_mirror_trades(customer1, customer2, date1, date2, df, sec_list=None):
     return final_df
 
 
+from pyspark.sql.functions import col, collect_set, collect_list
+from datetime import datetime
+
+def extra_stuff(pair):
+    # Get unique list of security IDs for the pair
+    securityids = (
+        MT_ui.filter(col("customerPair") == pair)
+             .select("esmp")
+             .dropna()
+             .agg(collect_set("esmp").alias("sec_ids"))
+             .first()["sec_ids"]
+    )
+
+    # Get sorted rolling period dates (start of 5-day windows)
+    rp_start = (
+        MT_ui.filter(col("customerPair") == pair)
+             .select("rollingPeriod")
+             .dropna()
+             .distinct()
+             .rdd.map(lambda row: row["rollingPeriod"].split("_to_")[1])
+             .collect()
+    )
+    rp_start = sorted(set(rp_start))
+
+    # Get sorted list of business dates
+    rp_end = (
+        MT_ui.filter(col("customerPair") == pair)
+             .select("businessDate")
+             .dropna()
+             .distinct()
+             .rdd.map(lambda row: row["businessDate"])
+             .collect()
+    )
+    rp_end = sorted(set(rp_end))
+
+    # Return date range and securities
+    if rp_start and rp_end:
+        return [rp_start[0], rp_end[-1]], securityids
+    else:
+        return None, None
+
+
+
+
