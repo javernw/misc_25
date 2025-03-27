@@ -369,6 +369,8 @@ for (customer1, customer2), (start_date, end_date) in customer_date_ranges.items
         mt_eval_df.alias("MT_b"),
         (F.col("MT_a.security_id") == F.col("MT_b.security_id")) &
         (F.col("MT_a.customer_id") != F.col("MT_b.customer_id")),  # Ensuring it's a trade between different customers
+
+
         "inner"
     ).withColumn("customer_pair", F.lit(f"{customer1} & {customer2}")) \
      .withColumn("date_range", F.lit(f"{start_date} to {end_date}"))
@@ -386,5 +388,97 @@ if results:
     final_df.show(truncate=False)
 else:
     print("No matching data found for the given customer pairs and date ranges.")
+
+
+
+
+from pyspark.sql.functions import col, lit, concat, when, sum as _sum
+from datetime import datetime, timedelta
+
+def find_mirror_trades(customer1, customer2, date1, date2, df, sec_list=None):
+    # Prepare empty output DataFrame with same schema
+    final_df = spark.createDataFrame([], df.schema)
+
+    # Convert to datetime
+    start_date = datetime.strptime(date1, "%Y-%m-%d")
+    cut_off_date = datetime.strptime(date2, "%Y-%m-%d")
+    end_date = start_date + timedelta(days=5)
+
+    # Loop until 5-day windows pass the cutoff date
+    while end_date <= cut_off_date:
+        current_start_str = start_date.strftime("%Y-%m-%d")
+        current_end_str = end_date.strftime("%Y-%m-%d")
+
+        # Filter for relevant trades
+        mt_eval_df = df.filter(col("customer_id").isin([customer1, customer2])) \
+                       .filter(col("security_id").isin(sec_list)) \
+                       .filter(col("businessdate").between(current_start_str, current_end_str)) \
+                       .groupBy("customer_id", "security_id", "buyorsell2") \
+                       .agg(_sum("amountusd").alias("agg_notional_value"))
+
+        # Self-join to match trades in opposite directions
+        mt_data_df = mt_eval_df.alias("a").join(
+            mt_eval_df.alias("b"),
+            (col("a.security_id") == col("b.security_id")) &
+            (col("a.customer_id") != col("b.customer_id")),
+            "inner"
+        )
+
+        # Rename columns to keep both sides of the trade
+        for col_name in ["customer_id", "security_id", "buyorsell2", "agg_notional_value"]:
+            mt_data_df = mt_data_df.withColumnRenamed(f"a.{col_name}", f"{col_name}_1") \
+                                   .withColumnRenamed(f"b.{col_name}", f"{col_name}_2")
+
+        # Compute notional value ratios
+        mt_data_df = mt_data_df.withColumn("ratio_diff1", (col("agg_notional_value_1") / col("agg_notional_value_2")).cast("double")) \
+                               .withColumn("ratio_diff2", (col("agg_notional_value_2") / col("agg_notional_value_1")).cast("double")) \
+                               .withColumn("ratio_check", when((col("ratio_diff1") >= 0.9) & (col("ratio_diff1") <= 1.1), 1).otherwise(0)) \
+                               .withColumn("ratio_check2", when((col("ratio_diff2") >= 0.9) & (col("ratio_diff2") <= 1.1), 1).otherwise(0))
+
+        # Filter for valid mirror trades
+        mt_data_df = mt_data_df.filter(
+            ((col("ratio_check") == 1) | (col("ratio_check2") == 1)) &
+            (col("buyorsell2_1") != col("buyorsell2_2")) &
+            ((col("agg_notional_value_1") > 5000) | (col("agg_notional_value_2") > 5000))
+        )
+
+        # Add rolling period label
+        mt_data_df = mt_data_df.withColumn("rolling_period", concat(lit(current_start_str), lit("_to_"), lit(current_end_str)))
+
+        # Union to final result
+        final_df = final_df.unionByName(mt_data_df, allowMissingColumns=True)
+
+        # Move the window forward by 1 day
+        start_date += timedelta(days=1)
+        end_date += timedelta(days=1)
+
+    # Drop exact duplicates on matched keys
+    final_df = final_df.dropDuplicates(subset=[
+        "customer_id_1", "customer_id_2", "security_id_1", "buyorsell2_1", "agg_notional_value_1",
+        "security_id_2", "buyorsell2_2", "agg_notional_value_2"
+    ])
+
+    # Count matched instances per pair & security
+    instance_df = final_df.groupBy("customer_id_1", "customer_id_2", "security_id_1").count() \
+                          .withColumnRenamed("count", "instance_size") \
+                          .withColumnRenamed("customer_id_1", "cid1") \
+                          .withColumnRenamed("customer_id_2", "cid2") \
+                          .withColumnRenamed("security_id_1", "secid")
+
+    # Join instance size back to final DataFrame
+    final_df = final_df.join(
+        instance_df,
+        (final_df.customer_id_1 == instance_df.cid1) &
+        (final_df.customer_id_2 == instance_df.cid2) &
+        (final_df.security_id_1 == instance_df.secid),
+        "left"
+    ).drop("cid1", "cid2", "secid")
+
+    # Final filters
+    final_df = final_df.dropDuplicates()
+    final_df = final_df.filter(col("instance_size") >= 3)
+    final_df = final_df.filter(col("buyorsell2_1") == "BUY")
+
+    return final_df
 
 
