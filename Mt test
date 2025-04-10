@@ -526,3 +526,100 @@ def extra_stuff(pair):
 
 
 
+from pyspark.sql.functions import col, lit, concat, when, sum as _sum
+from datetime import datetime, timedelta
+
+def find_mirror_trades(customer1, customer2, date1, date2, df, sec_list=None):
+    # Prepare empty output DataFrame with same schema
+    final_df = spark.createDataFrame([], df.schema)
+
+    # Step 1: Get actual business dates where trades occurred for these customers
+    available_dates = (
+        df.filter(col("customer_id").isin([customer1, customer2]))
+          .filter(col("businessdate").between(date1, date2))
+          .select("businessdate")
+          .distinct()
+          .rdd.map(lambda row: row["businessdate"])
+          .collect()
+    )
+
+    # Convert to datetime and sort
+    available_dates = sorted([datetime.strptime(str(d), "%Y-%m-%d") for d in available_dates])
+
+    for end_date in available_dates:
+        start_date = end_date - timedelta(days=5)
+
+        current_start_str = start_date.strftime("%Y-%m-%d")
+        current_end_str = end_date.strftime("%Y-%m-%d")
+
+        # Step 2: Filter relevant trades within rolling window
+        mt_eval_df = df.filter(col("customer_id").isin([customer1, customer2])) \
+                       .filter(col("security_id").isin(sec_list)) \
+                       .filter(col("businessdate").between(current_start_str, current_end_str)) \
+                       .groupBy("customer_id", "security_id", "buyorsell2") \
+                       .agg(_sum("amountusd").alias("agg_notional_value"))
+
+        # Step 3: Self-join on same security, opposite customer
+        mt_data_df = mt_eval_df.alias("a").join(
+            mt_eval_df.alias("b"),
+            (col("a.security_id") == col("b.security_id")) &
+            (col("a.customer_id") != col("b.customer_id")),
+            "inner"
+        ).select(
+            col("a.customer_id").alias("customer_id_1"),
+            col("a.security_id").alias("security_id_1"),
+            col("a.buyorsell2").alias("buyorsell2_1"),
+            col("a.agg_notional_value").alias("agg_notional_value_1"),
+            col("b.customer_id").alias("customer_id_2"),
+            col("b.security_id").alias("security_id_2"),
+            col("b.buyorsell2").alias("buyorsell2_2"),
+            col("b.agg_notional_value").alias("agg_notional_value_2")
+        )
+
+        # Step 4: Ratio logic
+        mt_data_df = mt_data_df.withColumn("ratio_diff1", (col("agg_notional_value_1") / col("agg_notional_value_2")).cast("double")) \
+                               .withColumn("ratio_diff2", (col("agg_notional_value_2") / col("agg_notional_value_1")).cast("double")) \
+                               .withColumn("ratio_check", when((col("ratio_diff1") >= 0.9) & (col("ratio_diff1") <= 1.1), 1).otherwise(0)) \
+                               .withColumn("ratio_check2", when((col("ratio_diff2") >= 0.9) & (col("ratio_diff2") <= 1.1), 1).otherwise(0))
+
+        # Step 5: Filter valid mirror trades
+        mt_data_df = mt_data_df.filter(
+            ((col("ratio_check") == 1) | (col("ratio_check2") == 1)) &
+            (col("buyorsell2_1") != col("buyorsell2_2")) &
+            ((col("agg_notional_value_1") > 5000) | (col("agg_notional_value_2") > 5000))
+        )
+
+        # Step 6: Add rolling period label
+        mt_data_df = mt_data_df.withColumn("rolling_period", concat(lit(current_start_str), lit("_to_"), lit(current_end_str)))
+
+        # Step 7: Append to final DataFrame
+        final_df = final_df.unionByName(mt_data_df, allowMissingColumns=True)
+
+    # Step 8: Deduplicate and summarize
+    final_df = final_df.dropDuplicates(subset=[
+        "customer_id_1", "customer_id_2", "security_id_1", "buyorsell2_1", "agg_notional_value_1",
+        "security_id_2", "buyorsell2_2", "agg_notional_value_2"
+    ])
+
+    # Count number of mirror trade instances per pair
+    instance_df = final_df.groupBy("customer_id_1", "customer_id_2").count() \
+                          .withColumnRenamed("count", "instance_size") \
+                          .withColumnRenamed("customer_id_1", "cid1") \
+                          .withColumnRenamed("customer_id_2", "cid2")
+
+    final_df = final_df.join(
+        instance_df,
+        (final_df.customer_id_1 == instance_df.cid1) &
+        (final_df.customer_id_2 == instance_df.cid2),
+        "left"
+    ).drop("cid1", "cid2")
+
+    # Final filter and cleanup
+    final_df = final_df.dropDuplicates()
+    final_df = final_df.filter(col("instance_size") >= 3)
+    final_df = final_df.filter(col("buyorsell2_1") == "BUY")
+
+    return final_df
+
+
+
