@@ -622,4 +622,30 @@ def find_mirror_trades(customer1, customer2, date1, date2, df, sec_list=None):
     return final_df
 
 
+# Step 2: Get trades in the current 5-day window
+        window_trades = df_filtered.filter(col("businessdate").between(current_start_str, current_end_str))
+
+        # Step 3: Get distinct (customer_id, security_id) pairs from the 5-day window
+        cust_sec_pairs = window_trades.select("customer_id", "security_id").distinct()
+
+        # Step 4: Get (customer_id, security_id) with BUY or SELL on end_date
+        trades_on_end = df_filtered.filter(col("businessdate") == current_end_str) \
+                                   .filter(col("buyorsell2").isin(["BUY", "SELL"])) \
+                                   .select("customer_id", "security_id").distinct()
+
+        # Step 5: Ensure overlap
+        valid_end_day_trades = cust_sec_pairs.join(
+            trades_on_end,
+            on=["customer_id", "security_id"],
+            how="inner"
+        )
+
+        if valid_end_day_trades.count() == 0:
+            continue  # skip noisy window
+
+        # Step 6: Aggregate notional values within the 5-day window
+        mt_eval_df = window_trades.groupBy("customer_id", "security_id", "buyorsell2") \
+                                  .agg(_sum("amountusd").alias("agg_notional_value"))
+
+
 
