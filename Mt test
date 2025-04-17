@@ -769,3 +769,37 @@ def find_mirror_trades(customer1, customer2, date1, date2, df):
     return final_df
 
 
+
+from itertools import combinations
+
+def run_mirror_trades_for_customers(customers, date1, date2, df):
+    """
+    Accepts a list of customer IDs, generates all unique customer pairs,
+    runs mirror trade detection, and returns combined results.
+    """
+    customer_pairs = list(combinations(customers, 2))  # all 2-customer combinations
+    print(f"Generated {len(customer_pairs)} customer pairs")
+
+    all_results = None
+
+    for customer1, customer2 in customer_pairs:
+        print(f"Processing pair: {customer1} & {customer2}")
+
+        try:
+            result_df = find_mirror_trades(customer1, customer2, date1, date2, df)
+
+            if result_df and result_df.count() > 0:
+                if all_results is None:
+                    all_results = result_df
+                else:
+                    all_results = all_results.unionByName(result_df, allowMissingColumns=True)
+
+        except Exception as e:
+            print(f"Error processing pair {customer1}, {customer2}: {e}")
+
+    if all_results:
+        return all_results
+    else:
+        return spark.createDataFrame([], df.schema)
+
+
