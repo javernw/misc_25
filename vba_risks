@@ -1,19 +1,49 @@
-Sub SplitRowsIntoSheetsWithRedFlagSection()
+Sub SplitRowsFromFileWithSummary()
+
+    Dim fd As FileDialog
+    Dim wbSource As Workbook, wbNew As Workbook
     Dim wsSource As Worksheet
-    Dim lastRow As Long, lastCol As Long
-    Dim i As Long, j As Long
-    Dim redFlagCol As Long
     Dim newSheet As Worksheet
+    Dim summarySheet As Worksheet
+    Dim selectedFile As String
+    Dim lastRow As Long, lastCol As Long
+    Dim redFlagCol As Long
+    Dim i As Long, j As Long
     Dim headerCell As Range, dataCell As Range
+    Dim outputPath As String
+    Dim summaryRow As Long
 
-    ' Set your source sheet
-    Set wsSource = ThisWorkbook.Sheets("Source") ' Update name if needed
+    ' Prompt user to select Excel file
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+    fd.Title = "Select the Excel file"
+    fd.Filters.Add "Excel Files", "*.xls; *.xlsx; *.xlsm", 1
 
-    ' Determine last row and column
+    If fd.Show <> -1 Then
+        MsgBox "No file selected.", vbExclamation
+        Exit Sub
+    End If
+
+    selectedFile = fd.SelectedItems(1)
+
+    ' Open source file
+    Set wbSource = Workbooks.Open(selectedFile)
+    Set wsSource = wbSource.Sheets(1) ' Change sheet name if needed
+
+    ' Create new workbook
+    Set wbNew = Workbooks.Add
+
+    ' Add a summary sheet
+    Set summarySheet = wbNew.Sheets(1)
+    summarySheet.Name = "Summary"
+    summarySheet.Cells(1, 1).Value = "Row Number"
+    summarySheet.Cells(1, 2).Value = "Sheet Name"
+    summaryRow = 2
+
+    ' Find last row/column
     lastRow = wsSource.Cells(wsSource.Rows.Count, 1).End(xlUp).Row
     lastCol = wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column
 
-    ' Find "red flag" column
+    ' Find 'red flag' column
     redFlagCol = 0
     For j = 1 To lastCol
         If Trim(LCase(wsSource.Cells(1, j).Value)) = "red flag" Then
@@ -23,48 +53,60 @@ Sub SplitRowsIntoSheetsWithRedFlagSection()
     Next j
 
     If redFlagCol = 0 Then
-        MsgBox "Column 'red flag' not found!", vbExclamation
+        MsgBox "'red flag' column not found.", vbExclamation
+        wbSource.Close SaveChanges:=False
         Exit Sub
     End If
 
-    ' Loop through each data row
+    ' Loop through each row and create tabs
     For i = 2 To lastRow
-        Set newSheet = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        newSheet.Name = "Row_" & (i - 1)
+        Dim sheetName As String
+        sheetName = "Row_" & (i - 1)
+        Set newSheet = wbNew.Sheets.Add(After:=wbNew.Sheets(wbNew.Sheets.Count))
+        newSheet.Name = sheetName
 
-        ' --- Copy full headers with formatting to row 1 ---
+        ' Copy headers with formatting
         For j = 1 To lastCol
-            Set headerCell = wsSource.Cells(1, j)
-            headerCell.Copy
+            wsSource.Cells(1, j).Copy
             newSheet.Cells(1, j).PasteSpecial Paste:=xlPasteFormats
-            newSheet.Cells(1, j).Value = headerCell.Value
+            newSheet.Cells(1, j).Value = wsSource.Cells(1, j).Value
         Next j
 
-        ' --- Copy full row data to row 2 ---
+        ' Copy row data with formatting
         For j = 1 To lastCol
-            Set dataCell = wsSource.Cells(i, j)
-            dataCell.Copy
+            wsSource.Cells(i, j).Copy
             newSheet.Cells(2, j).PasteSpecial Paste:=xlPasteFormats
-            newSheet.Cells(2, j).Value = dataCell.Value
+            newSheet.Cells(2, j).Value = wsSource.Cells(i, j).Value
         Next j
 
-        ' --- Reprint headers after "red flag" to row 4 ---
+        ' Headers after 'red flag' (row 4)
         For j = redFlagCol + 1 To lastCol
-            Set headerCell = wsSource.Cells(1, j)
-            headerCell.Copy
+            wsSource.Cells(1, j).Copy
             newSheet.Cells(4, j - redFlagCol).PasteSpecial Paste:=xlPasteFormats
-            newSheet.Cells(4, j - redFlagCol).Value = headerCell.Value
+            newSheet.Cells(4, j - redFlagCol).Value = wsSource.Cells(1, j).Value
         Next j
 
-        ' --- Reprint row values after "red flag" to row 5 ---
+        ' Data after 'red flag' (row 5)
         For j = redFlagCol + 1 To lastCol
-            Set dataCell = wsSource.Cells(i, j)
-            dataCell.Copy
+            wsSource.Cells(i, j).Copy
             newSheet.Cells(5, j - redFlagCol).PasteSpecial Paste:=xlPasteFormats
-            newSheet.Cells(5, j - redFlagCol).Value = dataCell.Value
+            newSheet.Cells(5, j - redFlagCol).Value = wsSource.Cells(i, j).Value
         Next j
+
+        ' Add entry to summary
+        summarySheet.Cells(summaryRow, 1).Value = i - 1
+        summarySheet.Cells(summaryRow, 2).Value = sheetName
+        summaryRow = summaryRow + 1
     Next i
 
     Application.CutCopyMode = False
-    MsgBox "Done! " & (lastRow - 1) & " sheets created with post-'red flag' sections.", vbInformation
+
+    ' Save new workbook
+    outputPath = Left(selectedFile, InStrRev(selectedFile, ".")) & "split_with_summary.xlsx"
+    wbNew.SaveAs Filename:=outputPath
+    wbNew.Close SaveChanges:=False
+    wbSource.Close SaveChanges:=False
+
+    MsgBox "Done! New file saved as: " & outputPath, vbInformation
+
 End Sub
