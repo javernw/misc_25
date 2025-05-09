@@ -127,3 +127,65 @@ plt.legend(title="Column")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+# Create 2x2 subplots: Raw and Normalized for Value and Volume
+fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
+
+# Raw Trade Value (Top Left)
+for col in value_cols:
+    subset = percentile_df[percentile_df['column'] == col]
+    axes[0, 0].plot(subset['percentile'], subset['value'], label=col, marker='o')
+    for p in [90, 95]:
+        val = subset[subset['percentile'] == p]['value'].values
+        if val.size > 0:
+            axes[0, 0].axvline(p, color='gray', linestyle='--', linewidth=0.5)
+            axes[0, 0].text(p, val[0], f"{col} ({p}%)", fontsize=8, ha='right', va='bottom')
+
+# Raw Trade Volume (Top Right)
+for col in volume_cols:
+    subset = percentile_df[percentile_df['column'] == col]
+    axes[0, 1].plot(subset['percentile'], subset['value'], label=col, marker='o')
+    for p in [90, 95]:
+        val = subset[subset['percentile'] == p]['value'].values
+        if val.size > 0:
+            axes[0, 1].axvline(p, color='gray', linestyle='--', linewidth=0.5)
+            axes[0, 1].text(p, val[0], f"{col} ({p}%)", fontsize=8, ha='right', va='bottom')
+
+# Normalized Trade Value (Bottom Left)
+for col in value_cols:
+    subset = percentile_df[percentile_df['column'] == col]
+    axes[1, 0].plot(subset['percentile'], subset['normalized_value'], label=col, marker='o')
+    for p in [90, 95]:
+        val = subset[subset['percentile'] == p]['normalized_value'].values
+        if val.size > 0:
+            axes[1, 0].axvline(p, color='gray', linestyle='--', linewidth=0.5)
+            axes[1, 0].text(p, val[0], f"{col} ({p}%)", fontsize=8, ha='right', va='bottom')
+
+# Normalized Trade Volume (Bottom Right)
+for col in volume_cols:
+    subset = percentile_df[percentile_df['column'] == col]
+    axes[1, 1].plot(subset['percentile'], subset['normalized_value'], label=col, marker='o')
+    for p in [90, 95]:
+        val = subset[subset['percentile'] == p]['normalized_value'].values
+        if val.size > 0:
+            axes[1, 1].axvline(p, color='gray', linestyle='--', linewidth=0.5)
+            axes[1, 1].text(p, val[0], f"{col} ({p}%)", fontsize=8, ha='right', va='bottom')
+
+# Titles and formatting
+axes[0, 0].set_title("Raw Percentiles: Trade Value")
+axes[0, 1].set_title("Raw Percentiles: Trade Volume")
+axes[1, 0].set_title("Normalized Percentiles: Trade Value")
+axes[1, 1].set_title("Normalized Percentiles: Trade Volume")
+
+for i in range(2):
+    for j in range(2):
+        axes[i, j].set_xlabel("Percentile")
+        axes[i, j].grid(True)
+        axes[i, j].legend()
+
+axes[0, 0].set_ylabel("Raw Value")
+axes[1, 0].set_ylabel("Normalized Value (0–1)")
+
+plt.tight_layout()
+plt.show()
+
