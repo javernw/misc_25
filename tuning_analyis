@@ -349,3 +349,95 @@ for r in [1, 2]:
 
 fig.show()
 
+
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+# Define columns
+column_names = [
+    'HighRisk_NonHome_Currency_Trade_Value',
+    'HighRisk_NonHome_Currency_Trade_Volume',
+    'Restricted_Currency_Trade_Value',
+    'Restricted_Currency_Trade_Volume'
+]
+
+# Define which are value vs volume columns
+value_cols = [c for c in column_names if 'Value' in c]
+volume_cols = [c for c in column_names if 'Volume' in c]
+
+# Create subplot layout
+fig = make_subplots(rows=2, cols=2, subplot_titles=column_names)
+
+# Format currency (for value columns)
+def format_currency(value):
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    elif value >= 1_000:
+        return f"${value / 1_000:.1f}K"
+    else:
+        return f"${value:,.0f}"
+
+# Format plain number (for volume columns)
+def format_number(value):
+    return f"{value:,.0f}"
+
+# Get value at percentile
+def get_value(col, pct):
+    subset = percentile_df[(percentile_df['column'] == col) & (percentile_df['percentile'] == pct)]
+    return subset['value'].values[0] if not subset.empty else None
+
+# Build chart
+for idx, col_name in enumerate(column_names):
+    row = 1 if idx < 2 else 2
+    col = 1 if idx % 2 == 0 else 2
+    data = percentile_df[percentile_df['column'] == col_name]
+
+    # Add the curve
+    fig.add_trace(go.Scatter(
+        x=data['percentile'],
+        y=data['value'],
+        mode='lines+markers',
+        name=col_name
+    ), row=row, col=col)
+
+    # Annotate 90th and 95th percentiles
+    for pct in [90, 95]:
+        y_val = get_value(col_name, pct)
+        if y_val:
+            fig.add_shape(
+                type='line',
+                x0=pct, x1=pct,
+                y0=0, y1=y_val,
+                line=dict(color='gray', dash='dot'),
+                row=row, col=col
+            )
+            # Apply currency only for value columns
+            label = f"{pct}%: {format_currency(y_val) if col_name in value_cols else format_number(y_val)}"
+            fig.add_annotation(
+                text=label,
+                x=pct,
+                y=y_val,
+                xanchor='left',
+                yanchor='bottom',
+                showarrow=True,
+                arrowhead=2,
+                font=dict(size=10),
+                row=row, col=col
+            )
+
+# Layout adjustments
+fig.update_layout(
+    height=800,
+    width=1200,
+    title_text="Interactive Percentile Analysis with Value/Volume Annotations",
+    showlegend=True
+)
+
+# Axes
+for r in [1, 2]:
+    for c in [1, 2]:
+        fig.update_xaxes(title_text="Percentile", row=r, col=c)
+        fig.update_yaxes(title_text="Value", row=r, col=c)
+
+fig.show()
+
