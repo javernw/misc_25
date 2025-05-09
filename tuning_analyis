@@ -103,3 +103,27 @@ plt.legend(title="Column")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+import matplotlib.pyplot as plt
+
+# Copy the percentile DataFrame
+plot_df = percentile_df.copy()
+
+# Normalize values within each column
+plot_df['normalized_value'] = plot_df.groupby('column')['value'].transform(
+    lambda x: (x - x.min()) / (x.max() - x.min())
+)
+
+# Plot normalized curves
+plt.figure(figsize=(12, 6))
+for col in plot_df['column'].unique():
+    subset = plot_df[plot_df['column'] == col]
+    plt.plot(subset['percentile'], subset['normalized_value'], label=col, marker='o')
+
+plt.title("Normalized Percentile Curves")
+plt.xlabel("Percentile")
+plt.ylabel("Normalized Value (0 to 1)")
+plt.legend(title="Column")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
