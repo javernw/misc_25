@@ -48,4 +48,27 @@ plt.legend(title="Column")
 plt.tight_layout()
 plt.show()
 
-import ace_tools as tools; tools.display_dataframe_to_user(name="Percentile Analysis with Thresholds", dataframe=percentile_df)
+import ace_tools as tools; tools.display_dataframe_to_user(by name="Percentile Analysis with Thresholds", dataframe=percentile_df)
+
+
+
+from pyspark.sql.functions import col
+
+def change_data_type(df, cols, d_type):
+    for c in cols:
+        df = df.withColumn(c, col(c).cast(d_type))
+    return df
+
+# Cleaned list of column names
+numerical_columns = [
+    'HighRisk_NonHome_Currency_Trade_Value',
+    'HighRisk_NonHome_Currency_Trade_Volume',
+    'Restricted_Currency_Trade_Value',
+    'Restricted_Currency_Trade_Volume'
+]
+
+# Apply the function to each month's DataFrame
+tuning_aug = change_data_type(tuning_aug, numerical_columns, "float")
+tuning_sept = change_data_type(tuning_sept, numerical_columns, "float")
+tuning_oct = change_data_type(tuning_oct, numerical_columns, "float")
+
