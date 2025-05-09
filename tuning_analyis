@@ -265,3 +265,87 @@ fig.update_yaxes(title_text="Normalized Value", row=2, col=1)
 fig.update_yaxes(title_text="Normalized Value", row=2, col=2)
 
 fig.show()
+
+
+
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+# Define column names
+column_names = [
+    'HighRisk_NonHome_Currency_Trade_Value',
+    'HighRisk_NonHome_Currency_Trade_Volume',
+    'Restricted_Currency_Trade_Value',
+    'Restricted_Currency_Trade_Volume'
+]
+
+# Create subplot layout
+fig = make_subplots(rows=2, cols=2, subplot_titles=column_names)
+
+# Format helper (e.g., 1200 -> $1.2K, 2_500_000 -> $2.5M)
+def format_currency(value):
+    if value >= 1_000_000:
+        return f"${value/1_000_000:.1f}M"
+    elif value >= 1_000:
+        return f"${value/1_000:.1f}K"
+    else:
+        return f"${value:,.0f}"
+
+# Get value at a specific percentile
+def get_value(col, pct):
+    subset = percentile_df[(percentile_df['column'] == col) & (percentile_df['percentile'] == pct)]
+    return subset['value'].values[0] if not subset.empty else None
+
+# Build chart
+for idx, col_name in enumerate(column_names):
+    row = 1 if idx < 2 else 2
+    col = 1 if idx % 2 == 0 else 2
+    data = percentile_df[percentile_df['column'] == col_name]
+
+    # Add line chart
+    fig.add_trace(go.Scatter(
+        x=data['percentile'],
+        y=data['value'],
+        mode='lines+markers',
+        name=col_name
+    ), row=row, col=col)
+
+    # Add annotations for 90th and 95th percentiles
+    for pct in [90, 95]:
+        y_val = get_value(col_name, pct)
+        if y_val:
+            fig.add_shape(
+                type='line',
+                x0=pct, x1=pct,
+                y0=0, y1=y_val,
+                line=dict(color='gray', dash='dot'),
+                row=row, col=col
+            )
+            fig.add_annotation(
+                text=f"{pct}%: {format_currency(y_val)}",
+                x=pct,
+                y=y_val,
+                xanchor='left',
+                yanchor='bottom',
+                showarrow=True,
+                arrowhead=2,
+                font=dict(size=10),
+                row=row, col=col
+            )
+
+# Layout adjustments
+fig.update_layout(
+    height=800,
+    width=1200,
+    title_text="Interactive Percentile Analysis with Currency Annotations",
+    showlegend=True
+)
+
+# Axes
+for r in [1, 2]:
+    for c in [1, 2]:
+        fig.update_xaxes(title_text="Percentile", row=r, col=c)
+        fig.update_yaxes(title_text="Value", row=r, col=c)
+
+fig.show()
+
