@@ -72,3 +72,34 @@ tuning_aug = change_data_type(tuning_aug, numerical_columns, "float")
 tuning_sept = change_data_type(tuning_sept, numerical_columns, "float")
 tuning_oct = change_data_type(tuning_oct, numerical_columns, "float")
 
+
+
+import matplotlib.pyplot as plt
+
+# Get unique column names
+columns = percentile_df['column'].unique()
+
+# Set up the plot
+plt.figure(figsize=(12, 6))
+
+# Plot each column's curve
+for col in columns:
+    subset = percentile_df[percentile_df['column'] == col]
+    plt.plot(subset['percentile'], subset['value'], marker='o', label=col)
+
+# Highlight threshold percentiles (90th and 95th)
+for col in columns:
+    for p in [90, 95]:
+        val = percentile_df[(percentile_df['column'] == col) & (percentile_df['percentile'] == p)]['value'].values
+        if val.size > 0:
+            plt.axvline(x=p, color='grey', linestyle='--', linewidth=0.5)
+            plt.text(p, val[0], f"{col} {p}%", fontsize=8, va='bottom', ha='right')
+
+# Final touches
+plt.title("Percentile Curves for Multiple Columns")
+plt.xlabel("Percentile")
+plt.ylabel("Value")
+plt.legend(title="Column")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
