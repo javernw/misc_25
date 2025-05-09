@@ -1,0 +1,51 @@
+# Re-import necessary libraries after environment reset
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Simulate a DataFrame with multiple numeric columns
+np.random.seed(42)
+df = pd.DataFrame({
+    'value1': np.random.normal(10, 2, 1000),
+    'value2': np.random.normal(20, 5, 1000),
+    'value3': np.random.normal(50, 10, 1000)
+})
+
+# Define desired percentiles
+percentile_range = np.arange(0, 101, 5)
+
+# Compute percentiles for each numeric column
+percentile_records = []
+for col in df.select_dtypes(include=[np.number]).columns:
+    pct_values = np.percentile(df[col], percentile_range)
+    for p, v in zip(percentile_range, pct_values):
+        percentile_records.append({
+            'column': col,
+            'percentile': p,
+            'value': v,
+            'is_threshold': p in [90, 95]
+        })
+
+# Convert to DataFrame
+percentile_df = pd.DataFrame(percentile_records)
+
+# Visualize percentiles and thresholds
+plt.figure(figsize=(12, 6))
+sns.lineplot(data=percentile_df, x='percentile', y='value', hue='column', marker='o')
+
+# Annotate threshold points
+threshold_points = percentile_df[percentile_df['is_threshold']]
+for _, row in threshold_points.iterrows():
+    plt.text(row['percentile'], row['value'], f"{row['column']} ({row['percentile']}%)", 
+             fontsize=8, ha='right', va='bottom')
+
+plt.title("Percentile Curves with Threshold Flags (90th and 95th)")
+plt.xlabel("Percentile")
+plt.ylabel("Value")
+plt.grid(True)
+plt.legend(title="Column")
+plt.tight_layout()
+plt.show()
+
+import ace_tools as tools; tools.display_dataframe_to_user(name="Percentile Analysis with Thresholds", dataframe=percentile_df)
