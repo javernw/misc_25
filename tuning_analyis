@@ -189,3 +189,79 @@ axes[1, 0].set_ylabel("Normalized Value (0–1)")
 plt.tight_layout()
 plt.show()
 
+
+
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Simulate the dataset
+np.random.seed(42)
+df = pd.DataFrame({
+    'HighRisk_Trade_Value': np.random.normal(100000, 20000, 1000),
+    'HighRisk_Trade_Volume': np.random.normal(50, 10, 1000),
+    'Restricted_Trade_Value': np.random.normal(80000, 15000, 1000),
+    'Restricted_Trade_Volume': np.random.normal(40, 8, 1000)
+})
+
+# Compute percentiles
+percentile_range = np.arange(0, 101, 5)
+records = []
+for col in df.columns:
+    pct_values = np.percentile(df[col], percentile_range)
+    for p, v in zip(percentile_range, pct_values):
+        records.append({'column': col, 'percentile': p, 'value': v})
+
+percentile_df = pd.DataFrame(records)
+percentile_df['normalized_value'] = percentile_df.groupby('column')['value'].transform(
+    lambda x: (x - x.min()) / (x.max() - x.min())
+)
+
+# Identify value vs volume columns
+value_cols = [col for col in df.columns if 'Value' in col]
+volume_cols = [col for col in df.columns if 'Volume' in col]
+
+# Create subplot layout
+fig = make_subplots(rows=2, cols=2, subplot_titles=[
+    "Raw Percentiles: Trade Value", "Raw Percentiles: Trade Volume",
+    "Normalized Percentiles: Trade Value", "Normalized Percentiles: Trade Volume"
+])
+
+# Plot raw values (top row)
+for col in value_cols:
+    data = percentile_df[percentile_df['column'] == col]
+    fig.add_trace(go.Scatter(x=data['percentile'], y=data['value'], name=col,
+                             mode='lines+markers'), row=1, col=1)
+
+for col in volume_cols:
+    data = percentile_df[percentile_df['column'] == col]
+    fig.add_trace(go.Scatter(x=data['percentile'], y=data['value'], name=col,
+                             mode='lines+markers'), row=1, col=2)
+
+# Plot normalized values (bottom row)
+for col in value_cols:
+    data = percentile_df[percentile_df['column'] == col]
+    fig.add_trace(go.Scatter(x=data['percentile'], y=data['normalized_value'], name=col,
+                             mode='lines+markers', showlegend=False), row=2, col=1)
+
+for col in volume_cols:
+    data = percentile_df[percentile_df['column'] == col]
+    fig.add_trace(go.Scatter(x=data['percentile'], y=data['normalized_value'], name=col,
+                             mode='lines+markers', showlegend=False), row=2, col=2)
+
+# Layout adjustments
+fig.update_layout(height=800, width=1000, title_text="Interactive Percentile Analysis (Plotly)",
+                  showlegend=True)
+
+fig.update_xaxes(title_text="Percentile", row=1, col=1)
+fig.update_xaxes(title_text="Percentile", row=1, col=2)
+fig.update_xaxes(title_text="Percentile", row=2, col=1)
+fig.update_xaxes(title_text="Percentile", row=2, col=2)
+
+fig.update_yaxes(title_text="Raw Value", row=1, col=1)
+fig.update_yaxes(title_text="Raw Value", row=1, col=2)
+fig.update_yaxes(title_text="Normalized Value", row=2, col=1)
+fig.update_yaxes(title_text="Normalized Value", row=2, col=2)
+
+fig.show()
