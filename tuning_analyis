@@ -455,3 +455,40 @@ for col in df.select_dtypes(include=[np.number]).columns:
     thresholds[col] = {'90th': p90, '95th': p95}
     alert_counts[col] = {'>90th': count_90, '>95th': count_95}
 
+
+No problem — here’s the revised version for your tuning report, now incorporating both the 1st/99th percentile trimming and the Z-score method (|Z| > 2) to remove statistical outliers:
+
+⸻
+
+Threshold Calibration Summary
+
+As part of the threshold tuning process, we applied a two-step outlier removal strategy to ensure a more stable and representative distribution of trade values and volumes:
+	1.	Percentile-based filtering: We removed the 1st and 99th percentile values to eliminate hard-edge outliers and extreme tails.
+	2.	Z-score-based filtering: We further excluded records with absolute Z-scores greater than 2 (|Z| > 2) to reduce statistical noise and extreme deviations from the mean.
+
+Despite this dual filtering approach, the resulting data remained skewed, with sharp value increases beginning around the 85th percentile — indicating a zone of concentrated risk.
+
+To identify suitable alert thresholds, we evaluated percentile cutoffs at the 85th, 90th, and 95th levels. Each represents a different level of sensitivity:
+	•	85th percentile: Captures the top 15% of values and may be suitable for early alerting or lower-risk typologies.
+	•	90th percentile: Targets the top 10% of records and offers a balanced trade-off between detection and alert volume.
+	•	95th percentile: A high-severity threshold that flags only the top 5% of records, recommended for escalation scenarios.
+
+This tiered structure supports adaptable alerting logic aligned with risk levels, operational review capacity, or typology severity.
+
+⸻
+
+Estimated Alert Volumes
+
+Threshold Percentile	Approx. Volume Triggered	Recommended Use Case
+85th percentile	~15% of records	Broader sensitivity / early detection
+90th percentile	~10% of records	Primary alerting threshold
+95th percentile	~5% of records	Escalation or critical-risk threshold
+
+
+⸻
+
+This analysis supports a recommended threshold range of 85th–95th percentile for tuning key metrics, informed by both distribution shape and post-cleaning risk concentration.
+
+⸻
+
+Would you like this converted into a report-ready Word or markdown document?
