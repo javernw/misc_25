@@ -492,3 +492,25 @@ This analysis supports a recommended threshold range of 85th–95th percentile f
 ⸻
 
 Would you like this converted into a report-ready Word or markdown document?
+
+
+Absolutely — here’s the refined summary with the 85th percentile included as an additional threshold consideration:
+
+⸻
+
+Updated Summary with 85th Percentile:
+
+The 90th percentile is a strong starting point for identifying potential risk, as most “normal” activity tends to fall below this level. Values above the 90th percentile may indicate anomalies or elevated risk. The 95th percentile represents a more conservative threshold, capturing only the most extreme observations. Including the 85th percentile provides an intermediate tier that helps capture early signs of escalation. Setting thresholds at the 85th, 90th, or 95th percentile allows you to flag the top 15%, 10%, or 5% of observations, respectively — each offering different levels of sensitivity for prioritizing review or escalation.
+
+After removing the 1st and 99th percentile values to eliminate hard-edge outliers, we observed that trade values and volumes remain highly skewed, with a clear inflection point starting around the 85th percentile. Beyond this point, values increase sharply, suggesting that thresholds for alerting are best placed between the 85th and 95th percentiles — where risk concentration intensifies.
+
+For context:
+	•	An 85th percentile threshold would trigger ~15% of records
+	•	A 90th percentile threshold would trigger ~10% of records
+	•	A 95th percentile threshold would trigger ~5% of records
+
+This stratified approach supports flexible alerting logic based on review capacity, risk tolerance, or escalation tiers.
+
+⸻
+
+Would you like me to convert this into bullet points or a slide-ready version?
