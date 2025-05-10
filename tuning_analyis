@@ -441,3 +441,17 @@ for r in [1, 2]:
 
 fig.show()
 
+
+thresholds = {}
+alert_counts = {}
+
+for col in df.select_dtypes(include=[np.number]).columns:
+    p90 = df[col].quantile(0.90)
+    p95 = df[col].quantile(0.95)
+
+    count_90 = (df[col] > p90).sum()
+    count_95 = (df[col] > p95).sum()
+
+    thresholds[col] = {'90th': p90, '95th': p95}
+    alert_counts[col] = {'>90th': count_90, '>95th': count_95}
+
