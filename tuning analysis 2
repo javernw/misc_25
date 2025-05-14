@@ -1,0 +1,78 @@
+Great — here’s how you could structure your approach document with the rationales integrated into a professional format.
+
+⸻
+
+Scoring Framework Approach Document
+
+1. Overview
+
+This document outlines the approach used to develop and apply scoring logic to detect potentially suspicious trading behaviors. Each score represents either a scenario-based indicator or a customer-level risk factor. Scores are assigned based on severity, weighted contribution to alerts, and aggregated to support decision-making.
+
+⸻
+
+2. Scoring Design
+
+Each score consists of:
+	•	Severity: Reflects the seriousness of the behavior detected (e.g., 100% for critical indicators, 50% for supporting indicators).
+	•	Weight: Represents how much each score contributes to a given alert type, ensuring fair distribution when multiple scores apply.
+	•	Contribution: Product of severity and weight.
+	•	Rationale: Explanation of why the score is used and how it contributes to identifying risk.
+
+⸻
+
+3. Scenarios and Risk Factors
+
+Score Name	Rationale
+Mirror Trading	Captures coordinated buy/sell activity between accounts trading the same security in opposite directions, suggesting collusion or fund obfuscation. Given its direct link to potential money laundering, it carries full weight and severity.
+Acting Out of Line with Peer Group	Identifies customers whose trading behavior (volume/value) deviates significantly from peers. These deviations may signal unusual or anomalous trading patterns. Given its supportive nature, it contributes partially when combined with other factors.
+Trading Above Expected Profiles	Detects accounts trading above their historical or expected profile, which may indicate sudden risk escalation or unauthorized activity. Weighted partially to reflect context.
+Customers With Hidden Relationship Trading Same Security	Flags unlinked accounts engaging in similar trades, suggesting undisclosed relationships or potential collusion. Due to the seriousness of hidden affiliations, it carries full weight and severity.
+Customer On Watchlist	Captures transactions involving customers listed on regulatory or internal watchlists, representing elevated baseline risk. Weighted moderately to ensure it’s considered alongside contextual behavior.
+High Risk Customers	Represents inherent customer risk based on attributes such as geography, entity type, or regulatory classification. Weighted equally with other factors when combined.
+Customer Trades in Restricted / High-Risk Non-Home Currency	Detects trades involving restricted or high-risk currencies not associated with the customer’s jurisdiction, suggesting attempts to bypass controls or obscure fund movement. Assigned full contribution due to its risk implications.
+Security Issuer from High-Risk Country	Highlights exposure to securities issued in jurisdictions with elevated AML risk. Carries moderate weight, especially relevant when combined with suspicious customer behavior.
+Security Issuer Unaudited	Flags trades in securities issued by unaudited entities, which may signal lack of transparency or increased fraud risk. Weighted moderately to contribute in combination.
+Security Issuer with Few Employees	Identifies issuers with limited operational footprint, often used as shell entities. On its own it’s low-risk, but when paired with other flags, it adds meaningful context.
+
+
+⸻
+
+4. Alert Contribution Logic
+	•	If only one score applies to an alert, it is assigned 100% weight.
+	•	If two scores apply, each is weighted at 50%.
+	•	If three or more apply, weights are evenly distributed.
+	•	Severity levels are fixed based on the nature of the indicator.
+
+⸻
+
+5. Conclusion
+
+This scoring framework is designed to balance customer-level risk factors with transactional behavior. It supports the identification of complex suspicious patterns by weighting and combining individual indicators to form actionable alerts.
+
+⸻
+
+Let me know if you want this turned into a formatted Word or Markdown version.
+
+Certainly — here’s a refined and professional version that clarifies the difference between scenarios and risk factors, and incorporates your explanation into the framework:
+
+⸻
+
+6. Scenarios vs. Risk Factors
+
+The scoring model distinguishes between scenarios and risk factors based on their function in alert generation:
+	•	Scenarios reflect observed transactional behavior or patterns detected during trading activity (e.g., mirror trading, trading above profile).
+	•	Risk factors represent inherent or static attributes of a customer that elevate their baseline risk level (e.g., being on a watchlist, designated high-risk).
+
+Scenarios are the primary drivers of alert generation, while risk factors act as enhancers, increasing the likelihood of triggering an alert when they co-occur with moderate-risk scenarios.
+
+Enhanced Monitoring Mechanism:
+
+Risk factors are particularly important for contextual escalation. For example:
+
+If a customer is not designated as high risk, but they trigger two moderate scenarios weighted at 50 and 25, the total contribution of 75 may not meet the alert threshold. However, if the customer is classified as high risk (with a weight of 35), the combined contribution becomes 110 — thereby exceeding the threshold and generating an alert.
+
+This mechanism ensures customers with elevated inherent risk receive additional scrutiny, especially when their behavior alone may not be sufficient to raise a red flag.
+
+⸻
+
+Let me know if you’d like a diagram or visual to accompany this section, or if you need the document broken out into slides or a report format.
