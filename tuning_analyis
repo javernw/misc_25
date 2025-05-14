@@ -1,4 +1,4 @@
-# Re-import necessary libraries after environment reset
+d# Re-import necessary libraries after environment reset
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -514,3 +514,19 @@ This stratified approach supports flexible alerting logic based on review capaci
 ⸻
 
 Would you like me to convert this into bullet points or a slide-ready version?
+
+
+from kneed import KneeLocator
+
+sorted_vals = np.sort(df['value'])
+x = np.arange(len(sorted_vals))
+kneedle = KneeLocator(x, sorted_vals, curve='concave', direction='increasing')
+elbow_point = sorted_vals[kneedle.knee]
+
+plt.plot(x, sorted_vals)
+plt.axvline(kneedle.knee, color='red', linestyle='--', label=f'Elbow @ {round(elbow_point, 2)}')
+plt.legend()
+plt.title("Kneedle Elbow Detection")
+plt.show()
+
+How to determine whether to use concave or convex and increasing or decreasing 
