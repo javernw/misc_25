@@ -582,3 +582,76 @@ print(df)
 # Show results summary
 for k, v in results.items():
     print(f"\nColumn: {k}\nKnee Index: {v['knee_index']}\nKnee Value: {v['knee_value']}")
+
+import pandas as pd
+import numpy as np
+from kneed import KneeLocator
+import plotly.graph_objs as go
+from plotly.subplots import make_subplots
+
+# Sample DataFrame
+df = pd.DataFrame({
+    'amount': [1000, 900, 850, 700, 500, 300, 200, 150, 120, 100],
+    'score': [0.95, 0.92, 0.90, 0.85, 0.75, 0.60, 0.45, 0.30, 0.20, 0.10]
+})
+
+numeric_cols = df.select_dtypes(include=np.number).columns
+num_cols = len(numeric_cols)
+
+# Create subplot grid (adjust rows/cols depending on count)
+cols_per_row = 2
+rows = int(np.ceil(num_cols / cols_per_row))
+
+fig = make_subplots(rows=rows, cols=cols_per_row, subplot_titles=numeric_cols)
+
+results = {}
+
+for idx, col in enumerate(numeric_cols):
+    row = idx // cols_per_row + 1
+    col_pos = idx % cols_per_row + 1
+
+    sorted_vals = np.sort(df[col])[::-1]
+    x = np.arange(len(sorted_vals))
+
+    # Apply Kneedle
+    kneedle = KneeLocator(x, sorted_vals, curve='convex', direction='decreasing')
+    knee_index = kneedle.knee
+    knee_val = kneedle.knee_y
+
+    results[col] = {
+        'knee_index': knee_index,
+        'knee_value': knee_val
+    }
+
+    # Add flag column to DataFrame
+    flag_col = f'{col}_above_knee'
+    df[flag_col] = df[col] >= knee_val if knee_val is not None else False
+
+    # Add traces to subplot
+    fig.add_trace(
+        go.Scatter(x=x, y=sorted_vals, mode='lines+markers', name=col, showlegend=False),
+        row=row, col=col_pos
+    )
+
+    if knee_index is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=[knee_index], y=[knee_val],
+                mode='markers+text',
+                marker=dict(color='red', size=10),
+                text=[f"{round(knee_val, 2)}"],
+                textposition='top center',
+                showlegend=False
+            ),
+            row=row, col=col_pos
+        )
+
+# Update layout
+fig.update_layout(
+    title='Kneedle Elbow Detection Across Numeric Columns',
+    height=300 * rows,
+    width=1000,
+    showlegend=False
+)
+
+fig.show()
