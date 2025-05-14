@@ -655,3 +655,70 @@ fig.update_layout(
 )
 
 fig.show()
+
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+# Sample data in a DataFrame
+np.random.seed(0)
+df = pd.DataFrame({
+    'values': np.random.normal(50, 15, 1000)
+})
+
+# Sort the values for smooth curve
+df_sorted = df.sort_values(by='values').reset_index(drop=True)
+
+# Calculate percentiles
+p90 = np.percentile(df_sorted['values'], 90)
+p95 = np.percentile(df_sorted['values'], 95)
+
+# Create the curve
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=df_sorted.index,
+    y=df_sorted['values'],
+    mode='lines',
+    name='Value Curve'
+))
+
+# Add 90th and 95th percentile lines
+fig.add_trace(go.Scatter(
+    x=[df_sorted.index[0], df_sorted.index[-1]],
+    y=[p90, p90],
+    mode='lines',
+    line=dict(dash='dash', color='orange'),
+    name=f'90th Percentile: {p90:.2f}'
+))
+
+fig.add_trace(go.Scatter(
+    x=[df_sorted.index[0], df_sorted.index[-1]],
+    y=[p95, p95],
+    mode='lines',
+    line=dict(dash='dash', color='red'),
+    name=f'95th Percentile: {p95:.2f}'
+))
+
+# Optional: add annotation text
+fig.add_annotation(
+    x=len(df_sorted) * 0.95, y=p90,
+    text=f"90th: {p90:.2f}", showarrow=True,
+    arrowhead=1, ax=0, ay=-30
+)
+
+fig.add_annotation(
+    x=len(df_sorted) * 0.95, y=p95,
+    text=f"95th: {p95:.2f}", showarrow=True,
+    arrowhead=1, ax=0, ay=-30
+)
+
+# Final layout
+fig.update_layout(
+    title='Value Curve with 90th and 95th Percentile Annotations',
+    xaxis_title='Index',
+    yaxis_title='Value',
+    showlegend=True
+)
+
+fig.show()
