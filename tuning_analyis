@@ -530,3 +530,55 @@ plt.title("Kneedle Elbow Detection")
 plt.show()
 
 How to determine whether to use concave or convex and increasing or decreasing 
+
+import pandas as pd
+import numpy as np
+from kneed import KneeLocator
+import matplotlib.pyplot as plt
+
+# Sample DataFrame
+df = pd.DataFrame({
+    'amount': [1000, 900, 850, 700, 500, 300, 200, 150, 120, 100],
+    'score': [0.95, 0.92, 0.90, 0.85, 0.75, 0.60, 0.45, 0.30, 0.20, 0.10]
+})
+
+results = {}
+
+for col in df.select_dtypes(include=np.number).columns:
+    sorted_vals = np.sort(df[col])[::-1]  # descending
+    x = np.arange(len(sorted_vals))
+
+    kneedle = KneeLocator(x, sorted_vals, curve='convex', direction='decreasing')
+
+    knee_val = kneedle.knee_y if kneedle.knee_y is not None else None
+
+    results[col] = {
+        'knee_index': kneedle.knee,
+        'knee_value': knee_val
+    }
+
+    # Create a flag column indicating if the value is above the knee
+    flag_col = f'{col}_above_knee'
+    if knee_val is not None:
+        df[flag_col] = df[col] >= knee_val
+    else:
+        df[flag_col] = False  # fallback if no knee detected
+
+    # Optional plot
+    plt.figure()
+    plt.plot(x, sorted_vals, marker='o')
+    if knee_val is not None:
+        plt.axvline(kneedle.knee, color='red', linestyle='--', label=f'Knee: {round(knee_val, 2)}')
+    plt.title(f'Kneedle Detection for {col}')
+    plt.xlabel('Index')
+    plt.ylabel(col)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# Show final dataframe
+print(df)
+
+# Show results summary
+for k, v in results.items():
+    print(f"\nColumn: {k}\nKnee Index: {v['knee_index']}\nKnee Value: {v['knee_value']}")
