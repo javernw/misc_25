@@ -1,3 +1,18 @@
+def remove_iqr_outliers(df, col_group='column', val_col='value'):
+    filtered = []
+    for name, group in df.groupby(col_group):
+        Q1 = group[val_col].quantile(0.25)
+        Q3 = group[val_col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower = Q1 - 1.5 * IQR
+        upper = Q3 + 1.5 * IQR
+        filtered.append(group[(group[val_col] >= lower) & (group[val_col] <= upper)])
+    return pd.concat(filtered)
+
+filtered_df = remove_iqr_outliers(percentile_df)
+
+
+
 d# Re-import necessary libraries after environment reset
 import pandas as pd
 import numpy as np
