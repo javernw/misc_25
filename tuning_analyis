@@ -1,3 +1,27 @@
+results = []
+for col in df['column'].unique():
+    thresholds = percentile_df[(percentile_df['column'] == col) & 
+                               (percentile_df['percentile'].isin([90, 95]))]
+    p90 = thresholds.loc[thresholds['percentile'] == 90, 'value'].values[0]
+    p95 = thresholds.loc[thresholds['percentile'] == 95, 'value'].values[0]
+    
+    values = df[df['column'] == col]['value']
+    count_90 = (values > p90).sum()
+    count_95 = (values > p95).sum()
+    total = len(values)
+
+    results.append({
+        'column': col,
+        '90th Percentile Value': round(p90, 2),
+        'Alerts > 90th': count_90,
+        '% > 90th': f"{(count_90 / total * 100):.1f}%",
+        '95th Percentile Value': round(p95, 2),
+        'Alerts > 95th': count_95,
+        '% > 95th': f"{(count_95 / total * 100):.1f}%"
+    })
+
+summary_df = pd.DataFrame(results)
+
 def remove_iqr_outliers(df, col_group='column', val_col='value'):
     filtered = []
     for name, group in df.groupby(col_group):
