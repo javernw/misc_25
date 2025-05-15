@@ -1,3 +1,59 @@
+
+from kneed import KneeLocator
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Placeholder for results
+results = []
+df = df.copy()  # ensure we don't overwrite the original
+
+# Loop over each unique column name in long format
+for col_name in df['column'].unique():
+    subset = df[df['column'] == col_name].copy()
+
+    # Sort values in descending order
+    sorted_vals = np.sort(subset['value'])[::-1]
+    x = np.arange(len(sorted_vals))
+
+    # Apply Kneedle
+    kneedle = KneeLocator(x, sorted_vals, curve='convex', direction='decreasing')
+    knee_val = kneedle.knee_y if kneedle.knee_y is not None else None
+    knee_index = kneedle.knee
+
+    # Store summary
+    results.append({
+        'column': col_name,
+        'knee_index': knee_index,
+        'knee_value': knee_val
+    })
+
+    # Mark above-knee rows in the original df
+    if knee_val is not None:
+        df.loc[(df['column'] == col_name), 'above_knee'] = df.loc[
+            (df['column'] == col_name), 'value'
+        ] >= knee_val
+    else:
+        df.loc[(df['column'] == col_name), 'above_knee'] = False
+
+    # Optional plot
+    plt.figure()
+    plt.plot(x, sorted_vals, marker='o', label=col_name)
+    if knee_val is not None:
+        plt.axvline(knee_index, color='red', linestyle='--', label=f'Knee: {round(knee_val, 2)}')
+    plt.title(f'Kneedle Detection for {col_name}')
+    plt.xlabel('Index')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+# Convert results to DataFrame
+knee_results_df = pd.DataFrame(results)
+
+# Show summary
+print(knee_results_df)
+
 results = []
 for col in df['column'].unique():
     thresholds = percentile_df[(percentile_df['column'] == col) & 
