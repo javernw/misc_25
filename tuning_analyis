@@ -722,3 +722,32 @@ fig.update_layout(
 )
 
 fig.show()
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import seaborn as sns
+import numpy as np
+
+# Create subplots — one row per score type
+unique_scores = melted_df['Scores'].unique()
+rows = len(unique_scores)
+fig = make_subplots(rows=rows, cols=1, subplot_titles=unique_scores)
+
+# Loop through each score and create KDE (density) plots
+for i, score in enumerate(unique_scores, start=1):
+    values = melted_df[melted_df['Scores'] == score]['Value']
+    
+    # Use seaborn to get density values (or use scipy if preferred)
+    density = sns.kdeplot(values, bw_adjust=0.5, fill=False).get_lines()[0].get_data()
+    sns.plt.clf()  # Clear the plot since we only want the data
+    
+    x_vals, y_vals = density
+    
+    fig.add_trace(
+        go.Scatter(x=x_vals, y=y_vals, mode='lines', name=score),
+        row=i, col=1
+    )
+
+fig.update_layout(height=300 * rows, title_text="Density Plots for Each Score", showlegend=False)
+fig.show()
+
