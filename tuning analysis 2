@@ -76,3 +76,90 @@ This mechanism ensures customers with elevated inherent risk receive additional 
 ⸻
 
 Let me know if you’d like a diagram or visual to accompany this section, or if you need the document broken out into slides or a report format.
+
+Here’s a clear, structured write-up you can use to explain the table in a report or slide deck:
+
+⸻
+
+Threshold Summary Table Explanation
+
+This table provides a breakdown of alert activity at the 85th, 90th, and 95th percentile thresholds for both value and volume metrics, across two risk categories: HighRisk and Restricted. The purpose of this table is to quantify how many activities (i.e., records) would be triggered if thresholds were set at these percentile levels, using AND logic — meaning both value and volume must exceed their respective thresholds.
+
+⸻
+
+Columns Explained:
+	•	Group: The risk category being analyzed (HighRisk or Restricted)
+	•	Total: Total number of activities evaluated for the group
+	•	Value/Volume Xth Threshold: The actual numeric thresholds at the 85th, 90th, and 95th percentiles for value and volume metrics, based on IQR-cleaned data
+	•	Activity > Xth: Count of activities where both value and volume exceeded the percentile thresholds
+	•	% > Xth: Percentage of total activities that triggered based on both metrics exceeding the threshold
+
+⸻
+
+How to Read the Table:
+	•	HighRisk Group Example:
+	•	At the 85th percentile, the thresholds are:
+	•	Value: $16.2M
+	•	Volume: 5
+	•	357 activities exceeded both thresholds (12.6% of the population)
+	•	At 95th percentile, the thresholds rise to:
+	•	Value: $31.3M
+	•	Volume: 10
+	•	214 activities exceeded both thresholds (7.6%)
+	•	Restricted Group Example:
+	•	Thresholds and volumes are generally higher due to the group’s profile.
+	•	At the 95th percentile, only 81 activities triggered alerts (2.9%), reflecting tighter concentration in extreme cases.
+
+⸻
+
+What This Tells Us:
+	•	As thresholds increase from 85th → 95th, fewer alerts are generated, allowing for more selective prioritization.
+	•	The HighRisk group consistently triggers more alerts than the Restricted group, suggesting a wider range of elevated activity.
+	•	These thresholds can be used to define risk tiers or alert categories (e.g., Moderate = 85th, High = 90th, Critical = 95th).
+
+⸻
+
+Would you like a version of this explanation tailored for presenting to non-technical stakeholders or compliance teams?
+
+Here’s a simplified and business-friendly version of the explanation, suitable for non-technical stakeholders or compliance audiences:
+
+⸻
+
+How to Read the Threshold Summary Table (Business View)
+
+This table helps us understand how many activities would be flagged for review if we set risk thresholds at different levels — specifically the 85th, 90th, and 95th percentiles — for both transaction value and volume.
+
+We looked at two categories:
+	•	HighRisk: Transactions involving high-risk non-home currencies
+	•	Restricted: Transactions involving restricted currencies
+
+⸻
+
+Key Points:
+	•	Thresholds: For each group, we show the cutoff values for trade value and volume at the 85th, 90th, and 95th percentiles. These values were calculated after cleaning the data to remove outliers.
+	•	Activity Counts: We then count how many activities exceed both the value and volume thresholds at each level — meaning they are significantly high in both dimensions.
+	•	Percent of Total: The table also shows what percentage of the total population those alerts represent.
+
+⸻
+
+Example (HighRisk group):
+	•	If we set the threshold at the 90th percentile, we would flag:
+	•	Transactions over $22.5M in value
+	•	And with volume over 7
+	•	This would trigger 273 alerts, or 9.7% of all HighRisk activities.
+	•	At the 95th percentile, we raise the bar to:
+	•	Over $31.3M in value
+	•	Volume over 10
+	•	That reduces alerts to 214 (just 7.6% of the group), helping to focus only on the most severe cases.
+
+⸻
+
+Why This Matters:
+	•	This approach allows us to set data-driven thresholds — not arbitrary ones — based on actual transaction behavior.
+	•	It gives us flexibility to tune alert volumes depending on the risk appetite or operational capacity.
+	•	We can tier the alerting strategy (e.g., 85th = moderate, 95th = critical) to align with review priorities.
+
+⸻
+
+Would you like me to prepare this as a slide with visual bullet callouts and example charts?
+
