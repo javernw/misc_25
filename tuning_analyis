@@ -1,3 +1,54 @@
+# Define pairs of related columns
+groups = {
+    'HighRisk': ['HighRisk_NonHome_Currency_Trade_Value', 'HighRisk_NonHome_Currency_Trade_Volume'],
+    'Restricted': ['Restricted_Currency_Trade_Value', 'Restricted_Currency_Trade_Volume']
+}
+
+results = []
+
+for group_name, cols in groups.items():
+    # Merge thresholds for both metrics
+    thresholds = {}
+    for col in cols:
+        t = percentile_df[(percentile_df['column'] == col) & 
+                          (percentile_df['percentile'].isin([90, 95]))]
+        thresholds[col] = {
+            'p90': t.loc[t['percentile'] == 90, 'value'].values[0],
+            'p95': t.loc[t['percentile'] == 95, 'value'].values[0]
+        }
+
+    # Subset main data for this group
+    df_sub = df[df['column'].isin(cols)].copy()
+
+    # Pivot to wide format (each metric as a column)
+    df_wide = df_sub.pivot_table(index=df_sub.index, columns='column', values='value', aggfunc='first').reset_index()
+
+    # Apply threshold flags for both metrics
+    for col in cols:
+        df_wide[f'{col}_above_90'] = df_wide[col] > thresholds[col]['p90']
+        df_wide[f'{col}_above_95'] = df_wide[col] > thresholds[col]['p95']
+
+    # Union logic: flag if any metric in the group breaches threshold
+    df_wide['above_90_union'] = df_wide[[f'{c}_above_90' for c in cols]].any(axis=1)
+    df_wide['above_95_union'] = df_wide[[f'{c}_above_95' for c in cols]].any(axis=1)
+
+    # Count alerts
+    total = df_wide.shape[0]
+    count_90 = df_wide['above_90_union'].sum()
+    count_95 = df_wide['above_95_union'].sum()
+
+    results.append({
+        'Group': group_name,
+        '90th Union Alerts': count_90,
+        '% > 90th': f"{(count_90 / total) * 100:.1f}%",
+        '95th Union Alerts': count_95,
+        '% > 95th': f"{(count_95 / total) * 100:.1f}%"
+    })
+
+# Create final summary
+union_summary_df = pd.DataFrame(results)
+
+
 
 import pandas as pd
 import numpy as np
