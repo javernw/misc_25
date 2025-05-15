@@ -1,3 +1,47 @@
+# Step 1: Define metric groups
+groups = {
+    'HighRisk': ['HighRisk_NonHome_Currency_Trade_Value', 'HighRisk_NonHome_Currency_Trade_Volume'],
+    'Restricted': ['Restricted_Currency_Trade_Value', 'Restricted_Currency_Trade_Volume']
+}
+
+# Step 2: Extract 90th/95th percentile thresholds from percentile_df
+threshold_90 = percentile_df[percentile_df['percentile'] == 90].set_index('column')['value'].to_dict()
+threshold_95 = percentile_df[percentile_df['percentile'] == 95].set_index('column')['value'].to_dict()
+
+# Step 3: Evaluate thresholds using AND logic on wide-format data
+results = []
+
+for group, cols in groups.items():
+    value_col, volume_col = cols[0], cols[1]
+    
+    # Threshold values
+    v90, vol90 = threshold_90[value_col], threshold_90[volume_col]
+    v95, vol95 = threshold_95[value_col], threshold_95[volume_col]
+
+    # Apply AND logic filters
+    mask_90 = (df_wide[value_col] > v90) & (df_wide[volume_col] > vol90)
+    mask_95 = (df_wide[value_col] > v95) & (df_wide[volume_col] > vol95)
+
+    total = len(df_wide)
+    count_90 = mask_90.sum()
+    count_95 = mask_95.sum()
+
+    results.append({
+        'Group': group,
+        'Value 90th Threshold': round(v90, 2),
+        'Volume 90th Threshold': round(vol90, 2),
+        'Alerts > 90th (AND)': count_90,
+        '% > 90th (AND)': f"{(count_90 / total) * 100:.1f}%",
+        'Value 95th Threshold': round(v95, 2),
+        'Volume 95th Threshold': round(vol95, 2),
+        'Alerts > 95th (AND)': count_95,
+        '% > 95th (AND)': f"{(count_95 / total) * 100:.1f}%"
+    })
+
+# Step 4: Create final DataFrame
+and_alert_summary = pd.DataFrame(results)
+
+
 # Define pairs of related columns
 groups = {
     'HighRisk': ['HighRisk_NonHome_Currency_Trade_Value', 'HighRisk_NonHome_Currency_Trade_Volume'],
