@@ -1,3 +1,20 @@
+from pyspark.sql.functions import col
+
+# Define your percentiles
+percentiles = [0.75, 0.90, 0.95]
+
+# Compute percentile thresholds on the IQR-filtered data
+thresholds = df_no_outliers.approxQuantile("aggregate_notional", percentiles, 0.01)
+
+# Zip them into a list of (percentile, threshold)
+percentile_thresholds = list(zip(percentiles, thresholds))
+
+# Filter original DataFrame for each threshold and count how many rows meet or exceed it
+for pct, threshold in percentile_thresholds:
+    count = df_original.filter(col("aggregate_notional") >= threshold).count()
+    print(f"{int(pct * 100)}th percentile threshold: {threshold} → Rows >= threshold: {count}")
+
+
 # Step 3: Compute IQR for aggregate_notional
 iqr_bounds = df.approxQuantile("aggregate_notional", [0.25, 0.75], 0.01)
 q1, q3 = iqr_bounds
