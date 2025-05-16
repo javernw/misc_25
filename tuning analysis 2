@@ -1,3 +1,24 @@
+# Step 3: Compute IQR for aggregate_notional
+iqr_bounds = df.approxQuantile("aggregate_notional", [0.25, 0.75], 0.01)
+q1, q3 = iqr_bounds
+iqr = q3 - q1
+lower_bound = q1 - 1.5 * iqr
+upper_bound = q3 + 1.5 * iqr
+
+# Step 4: Filter out outliers
+df_no_outliers = df.filter((col("aggregate_notional") >= lower_bound) & (col("aggregate_notional") <= upper_bound))
+
+# Step 5: Show cleaned data
+df_no_outliers.show(truncate=False)
+
+# Optional: Recalculate percentiles on cleaned data
+percentiles = [0.5, 0.75, 0.9, 0.95, 0.99]
+agg_notional_percentiles_cleaned = df_no_outliers.select(
+    percentile_approx("aggregate_notional", percentiles, 100).alias("aggregate_notional_percentiles")
+)
+agg_notional_percentiles_cleaned.show()
+
+
 Days):
 Mirror trading typically involves trades executed in close succession—often on the same day or within a very short period—to avoid market exposure and minimize detection. Reducing the detection window from 5 days to 3 days increases precision by focusing on more tightly aligned trading behavior, which is more indicative of coordinated or intentional mirror activity. This adjustment helps reduce false positives from unrelated trades that happen to fall within a wider time frame, while still capturing the core risk behavior characterized by near-simultaneous buy-sell matches.
 
