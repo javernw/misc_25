@@ -1,3 +1,57 @@
+Here’s a professional write-up of rationales for your selected thresholds, based on the three scenarios in the tuning matrix and assuming you used distribution analysis (e.g., KDE plots, IQR filtering, z-scores, percentile thresholds) and domain considerations:
+
+⸻
+
+Scenario 1: Acting Out of Line with Peer Group
+
+Thresholds:
+	•	FX/EQ Value STD (Severity 1 & 2): 8, 5
+	•	FX/EQ Volume STD (Severity 1 & 2): 8, 5
+
+Rationale:
+	•	Z-score-based peer deviation was used to measure how far a customer trades above or below their peer group.
+	•	KDE analysis showed most customers clustered below z-score of 1, with steep drop-offs around 2–3.
+	•	By choosing a threshold of 8, the escalation tier targets extreme statistical deviations (99.9th percentile+), likely indicative of deliberate or high-impact behavior divergence.
+	•	The Severity 2 thresholds (e.g., 5) provide an early warning buffer, catching significant but less extreme deviations.
+	•	This dual threshold structure aligns with the goal of both risk alerting and tuning sensitivity.
+
+⸻
+
+Scenario 2: Trading Above Expected Profiles
+
+Thresholds:
+	•	TBD for value/volume STD (pending validation)
+	•	Min Aggregated Value: 5000
+	•	Min Aggregated Volume: 2
+
+Rationale:
+	•	This scenario filters customers who exceed their expected trading range, as defined by profile norms or historical behavior.
+	•	The minimum aggregated thresholds (value ≥ 5000, volume ≥ 2) ensure that low-activity noise is excluded and only repeat behavior or meaningful value trades are flagged.
+	•	Lookback periods (12 months trading history, 3-month minimum activity, 12-month KYC onboarding) were chosen to ensure stable baselines for comparison.
+	•	Value and volume STD thresholds will be finalized after percentile/z-score review on updated post-IQR datasets.
+
+⸻
+
+Scenario 3: Customer Trades in a Restricted / High-Risk Non-Home Currency
+
+Thresholds:
+	•	High-Risk Currency Value: $31M
+	•	High-Risk Currency Volume: 10
+	•	Restricted Currency Value: $50M
+	•	Restricted Currency Volume: 14
+
+Rationale:
+	•	KDE plots and IQR analysis were used to remove fat-finger trades, revealing the true distribution of restricted/high-risk currency trading.
+	•	Thresholds are set around the 95–98th percentile, balancing false positives and risk exposure.
+	•	The volume threshold (10–14) ensures that the trade pattern is sustained rather than incidental.
+	•	Value thresholds ($31M, $50M) were derived from inflection points observed in the tail of the distribution curves, consistent with where risk signals tend to cluster.
+	•	These levels prioritize escalation for meaningful risk exposure while filtering out operational noise.
+
+⸻
+
+Let me know if you’d like these formatted for a slide deck or presentation talking points!
+
+
 Great — here’s how you could structure your approach document with the rationales integrated into a professional format.
 
 ⸻
