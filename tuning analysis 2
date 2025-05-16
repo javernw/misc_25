@@ -1,3 +1,7 @@
+Days):
+Mirror trading typically involves trades executed in close succession—often on the same day or within a very short period—to avoid market exposure and minimize detection. Reducing the detection window from 5 days to 3 days increases precision by focusing on more tightly aligned trading behavior, which is more indicative of coordinated or intentional mirror activity. This adjustment helps reduce false positives from unrelated trades that happen to fall within a wider time frame, while still capturing the core risk behavior characterized by near-simultaneous buy-sell matches.
+
+
 Here’s a professional write-up of rationales for your selected thresholds, based on the three scenarios in the tuning matrix and assuming you used distribution analysis (e.g., KDE plots, IQR filtering, z-scores, percentile thresholds) and domain considerations:
 
 ⸻
