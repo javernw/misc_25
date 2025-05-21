@@ -1,10 +1,11 @@
-
-Here’s a well-structured paragraph for the “Security Issuer with Few Employees” score, reflecting your lower-tail analysis attempt and SME-driven threshold selection:
+Thanks for the clarification. Since you observed meaningful values in the 0.1% to 0.4% range, that tells us the distribution isn’t completely flat—but the lower tail is extremely compressed. Here’s the updated paragraph reflecting that nuance:
 
 ⸻
 
-To assess the risk associated with security issuers operating with unusually low employee counts, we applied a methodology similar to that used in mirror trading—filtering the dataset, removing the upper quartile to reduce skew, and attempting to derive a meaningful lower-bound threshold. Since this score is driven by a “less than or equal to” condition, the focus was on identifying meaningful cutoffs in the lower tail of the employee count distribution. However, during analysis, the data showed a sharp jump between the 0th and 1st percentile (e.g., from 0 to 100 employees), with no meaningful gradation in between. This irregular distribution made percentile-based thresholding ineffective, as it failed to capture the subtlety of legitimate low-operating entities versus shell-like profiles. Given these limitations, the final threshold was determined using subject matter expert (SME) discretion, based on known operational profiles and prior case experience. This ensured the score remains risk-aligned, targeting issuers with unusually lean structures that may warrant further investigation.
+To assess the risk associated with security issuers operating with unusually low employee counts, we applied a methodology similar to that used in mirror trading—removing the upper quartile to reduce skew and focusing on the lower tail of the distribution, since the threshold condition is based on a “less than or equal to” logic. While the lower end of the distribution appeared compressed, we observed meaningful variation in the 0.1 to 0.4 percentile range, indicating that extremely low employee counts were concentrated in a narrow band. However, due to the sharp value jump from the 0th to 1st percentile and the sparsity of data in that region, it was difficult to derive a stable percentile-based threshold. As a result, the final cutoff was selected based on subject matter expert (SME) discretion, informed by past cases and operational knowledge. This approach ensures that the score flags issuers with unusually lean organizational structures, consistent with shell entity risk characteristics.
 
+
+Here’s a well-structured paragraph for the “Security Issuer with Few Employees” score, reflecting your lower-tail analysis attempt and SME-driven threshold selection
 
 Certainly — here’s a parallel paragraph for Mirror Trading, incorporating your methodology:
 
