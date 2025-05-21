@@ -1,3 +1,11 @@
+Certainly — here’s a parallel paragraph for Mirror Trading, incorporating your methodology:
+
+⸻
+
+To establish a threshold for detecting mirror trading behavior, we used a dataset built on a 3-day rolling window that captures potential matched trade patterns between counterparties. Within this windowed dataset, we filtered for trade pairs with notional ratios between 90% and 110%, ensuring that only trades with near-identical economic exposure were considered. This filtering step was critical to isolate candidate mirror trades that reflect true alignment in notional size, as wider deviations may reflect coincidental or non-risk-aligned activity. From this subset, we removed the upper quartile to eliminate extreme values that could skew the distribution. We then calculated the 50th percentile of relevant metrics (e.g., trade value or frequency) to determine a baseline threshold for further analysis. This threshold, chosen in alignment with SME input, helps differentiate between opportunistic alignment and deliberate patterning—capturing mirror trades that are both proportionally matched and consistent enough to warrant further scrutiny.
+
+
+
 Here’s the updated paragraph with all your context incorporated:
 
 ⸻
