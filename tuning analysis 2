@@ -1,3 +1,11 @@
+
+Here’s a well-structured paragraph for the “Security Issuer with Few Employees” score, reflecting your lower-tail analysis attempt and SME-driven threshold selection:
+
+⸻
+
+To assess the risk associated with security issuers operating with unusually low employee counts, we applied a methodology similar to that used in mirror trading—filtering the dataset, removing the upper quartile to reduce skew, and attempting to derive a meaningful lower-bound threshold. Since this score is driven by a “less than or equal to” condition, the focus was on identifying meaningful cutoffs in the lower tail of the employee count distribution. However, during analysis, the data showed a sharp jump between the 0th and 1st percentile (e.g., from 0 to 100 employees), with no meaningful gradation in between. This irregular distribution made percentile-based thresholding ineffective, as it failed to capture the subtlety of legitimate low-operating entities versus shell-like profiles. Given these limitations, the final threshold was determined using subject matter expert (SME) discretion, based on known operational profiles and prior case experience. This ensured the score remains risk-aligned, targeting issuers with unusually lean structures that may warrant further investigation.
+
+
 Certainly — here’s a parallel paragraph for Mirror Trading, incorporating your methodology:
 
 ⸻
