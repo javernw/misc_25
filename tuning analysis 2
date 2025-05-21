@@ -1,3 +1,10 @@
+Here’s the updated paragraph with all your context incorporated:
+
+⸻
+
+To identify customers trading significantly above their historical profile, we compared current month activity to each customer’s historical average or median across a defined lookback window. We calculated the ratio of current-to-historical activity for both trade value and volume, then analyzed the distribution of these ratios across the population. To ensure a meaningful baseline, we first filtered the dataset to include only records with positive Z-scores, focusing on customers whose current month activity was above their historical norm. Additionally, we removed only the upper quartile of extreme values to reduce skew without discarding relevant mid-tier behavior. Percentile analysis was then applied to the filtered set. Based on this, the 50th percentile of current month value and volume (within the positively flagged group) was selected as a minimum threshold, informed by SME judgment. This floor ensures that only customers demonstrating both elevated and operationally significant activity are captured. The final threshold reflects both statistical support and practical business context for defining “Trading Above Profile.”
+
+
 from pyspark.sql.functions import col
 
 # Define your percentiles
