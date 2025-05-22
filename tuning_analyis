@@ -1,3 +1,29 @@
+
+# Re-import necessary packages after kernel reset
+import pandas as pd
+import numpy as np
+import ace_tools as tools
+
+# Simulate example data
+np.random.seed(42)
+df = pd.DataFrame({
+    'customer_id': np.random.choice(range(1, 6), size=20),
+    'current_month': np.random.choice(['2024-12', '2025-01', '2025-02'], size=20),
+    'batch_date': pd.to_datetime(np.random.choice(pd.date_range('2025-01-01', '2025-03-31'), size=20)),
+    'value': np.random.randint(1000, 5000, size=20)
+})
+
+# Step 1: Sort by customer_id, current_month, and batch_date descending
+df_sorted = df.sort_values(by=['customer_id', 'current_month', 'batch_date'], ascending=[True, True, False])
+
+# Step 2: Drop duplicates to keep the latest batch_date per customer and month
+df_latest = df_sorted.drop_duplicates(subset=['customer_id', 'current_month'], keep='first')
+
+# Reset index for clean output
+df_latest.reset_index(drop=True, inplace=True)
+
+tools.display_dataframe_to_user(name="Latest Record per Customer per Month", dataframe=df_latest)
+
 # Step 1: Define metric groups
 groups = {
     'HighRisk': ['HighRisk_NonHome_Currency_Trade_Value', 'HighRisk_NonHome_Currency_Trade_Volume'],
