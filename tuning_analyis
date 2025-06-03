@@ -1,3 +1,18 @@
+from pyspark.sql.window import Window
+from pyspark.sql.functions import col, row_number
+
+# Define window partitioned by customer and week, ordered by score descending
+window_spec = Window.partitionBy("customerid", "week").orderBy(col("score").desc())
+
+# Add a row number to identify the top scoring row per customer-week
+df_ranked = df.withColumn("rank", row_number().over(window_spec))
+
+# Filter to keep only the highest scoring row per customer-week
+df_top_score = df_ranked.filter(col("rank") == 1).drop("rank")
+
+# Show result
+df_top_score.show()
+
 
 # Re-import necessary packages after kernel reset
 import pandas as pd
