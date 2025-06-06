@@ -1,3 +1,28 @@
+from pyspark.sql.functions import col
+
+# Initialize dictionary
+percentile_results = {}
+
+# Loop over columns and thresholds
+for col_name, threshold in zip(df_columns, df_values):
+    # Filter the DataFrame
+    filtered_df = actingoutofline_alerts.filter(col(col_name) > threshold)
+
+    # Compute percentiles
+    percentiles_out = filtered_df.approxQuantile(col_name, percentiles, 0.0)
+
+    # Store results in dictionary
+    percentile_results[col_name] = dict(zip(percentiles, percentiles_out))
+
+for feature, p_dict in percentile_results.items():
+    print(f"\nPercentiles for {feature}:")
+    for p, v in p_dict.items():
+        print(f"  {p*100:.2f}th percentile: {v}")
+
+
+
+
+
 from pyspark.sql.window import Window
 from pyspark.sql.functions import col, row_number
 
