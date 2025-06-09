@@ -1,3 +1,5 @@
+=TEXTJOIN(", ", TRUE, FILTER(B$1:D$1, XLOOKUP(F1, A$2:A$4, B$2:D$4)="Y"))
+
 =TEXTJOIN(", ", TRUE, FILTER(A$1:D$1, INDEX(A$2:D$4, MATCH(F1, A$2:A$4, 0), 0)="Y"))
 
 from pyspark.sql.functions import col
