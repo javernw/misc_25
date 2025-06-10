@@ -1,5 +1,50 @@
 import pandas as pd
 
+# List of DataFrames
+datasets = [df1, df2, df3, df4, df5, df6, df7]
+sample_sizes = [10, 15, 20, 10, 100, 20, 25]
+dataset_labels = ['df1', 'df2', 'df3', 'df4', 'df5', 'df6', 'df7']
+
+used_ids = set()
+samples = []
+
+for i, (df, requested_n) in enumerate(zip(datasets, sample_sizes)):
+    label = dataset_labels[i]
+
+    # Step 1: Remove rows with already used customer_ids
+    df_filtered = df[~df['customer_id'].isin(used_ids)]
+
+    # Step 2: Drop duplicates to get one row per customer_id (random by shuffling first)
+    df_shuffled = df_filtered.sample(frac=1, random_state=42)
+    df_unique = df_shuffled.drop_duplicates(subset='customer_id')
+
+    # Step 3: Decide how many rows to keep
+    if len(df_unique) < 100:
+        sample = df_unique
+    else:
+        sample = df_unique.sample(n=min(requested_n, len(df_unique)), random_state=42)
+
+    # Step 4: Add identifier column
+    sample['source_dataset'] = label
+
+    # Step 5: Update used_ids with customer_ids from the **filtered DataFrame**
+    # to prevent future overlap
+    used_ids.update(df_unique['customer_id'])
+
+    # Step 6: Store sample
+    samples.append(sample)
+
+# Combine all into one DataFrame
+final_sample = pd.concat(samples, ignore_index=True)
+
+# Final check (optional)
+assert final_sample['customer_id'].duplicated().sum() == 0, "Duplicate customer_id found!"
+
+print(final_sample.shape)
+print(final_sample['source_dataset'].value_counts())
+
+import pandas as pd
+
 # Example: list of datasets
 datasets = [df1, df2, df3, df4, df5, df6, df7]
 sample_sizes = [10, 15, 20, 10, 100, 20, 25]  # example, total 200
