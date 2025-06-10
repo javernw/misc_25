@@ -1,5 +1,44 @@
 import pandas as pd
 
+# Example list of DataFrames and sample sizes
+datasets = [df1, df2, df3, df4, df5, df6, df7]
+sample_sizes = [10, 15, 20, 10, 100, 20, 25]
+dataset_labels = ['df1', 'df2', 'df3', 'df4', 'df5', 'df6', 'df7']
+
+used_ids = set()
+samples = []
+
+for i, (df, requested_n) in enumerate(zip(datasets, sample_sizes)):
+    label = dataset_labels[i]
+    
+    # Case 1: Small dataset, keep all rows regardless of duplicates
+    if len(df) < 100:
+        sample = df.copy()
+        sample['source_dataset'] = label
+        samples.append(sample)
+        continue  # Do NOT update used_ids, allow overlaps
+       
+    # Case 2: Larger dataset - enforce unique IDs globally
+    df_filtered = df[~df['customer_id'].isin(used_ids)]
+    df_shuffled = df_filtered.sample(frac=1, random_state=42)
+    df_unique = df_shuffled.drop_duplicates(subset='customer_id')
+
+    sample = df_unique.sample(n=min(requested_n, len(df_unique)), random_state=42)
+    sample['source_dataset'] = label
+
+    used_ids.update(sample['customer_id'])
+    samples.append(sample)
+
+# Final combined sample
+final_sample = pd.concat(samples, ignore_index=True)
+
+# Optional check: only for large datasets should customer_id be unique
+print(final_sample.shape)
+print(final_sample['source_dataset'].value_counts())
+
+
+import pandas as pd
+
 # List of DataFrames
 datasets = [df1, df2, df3, df4, df5, df6, df7]
 sample_sizes = [10, 15, 20, 10, 100, 20, 25]
