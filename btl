@@ -1,0 +1,35 @@
+import pandas as pd
+
+# Example: list of datasets
+datasets = [df1, df2, df3, df4, df5, df6, df7]
+sample_sizes = [10, 15, 20, 10, 100, 20, 25]  # example, total 200
+
+# Set to track already used customer_ids
+used_ids = set()
+
+# List to collect sampled DataFrames
+samples = []
+
+for i, (df, n) in enumerate(zip(datasets, sample_sizes)):
+    # Remove rows with IDs already used in previous datasets
+    df_filtered = df[~df['customer_id'].isin(used_ids)]
+
+    # Shuffle to randomize before deduplication
+    df_shuffled = df_filtered.sample(frac=1, random_state=42)
+
+    # Drop duplicates to get one row per customer_id
+    df_unique = df_shuffled.drop_duplicates(subset='customer_id')
+
+    # Sample from the remaining
+    sample = df_unique.sample(n=min(n, len(df_unique)), random_state=42)
+
+    # Track used customer_ids
+    used_ids.update(sample['customer_id'])
+
+    # Add to result list
+    samples.append(sample)
+
+# Final combined sample
+final_sample = pd.concat(samples, ignore_index=True)
+
+print(final_sample.shape)
