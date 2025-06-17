@@ -1,0 +1,57 @@
+from pylatex import Document, Section, Subsection, Command, NoEscape
+from pylatex.utils import italic, bold
+
+# Create document
+doc = Document(documentclass="article", document_options=["fleqn"])
+doc.packages.append(Command('usepackage', 'amsmath'))
+doc.packages.append(Command('usepackage', 'graphicx'))
+doc.packages.append(Command('usepackage', 'moreverb'))
+
+# Set paragraph formatting
+doc.preamble.append(Command('setlength', NoEscape('\\parindent'), '0mm'))
+doc.preamble.append(Command('setlength', NoEscape('\\parskip'), '1mm'))
+
+# Title, author, date
+doc.preamble.append(Command('title', bold('Writing Articles with LaTeX')))
+doc.preamble.append(Command('author', 'Peter Hertel \\\\ University of Osnabrück, Germany'))
+doc.preamble.append(Command('date', 'March 2010'))
+doc.append(NoEscape(r'\maketitle'))
+
+# Abstract
+doc.append(NoEscape(r'\begin{abstract}'))
+doc.append("This is an educational article addressing students of the Applied Physics "
+           "School at TEDA, Tianjin, PR of China. We describe how to compose an article "
+           "with LaTeX, a document preparation system. We explain the coarse structure, "
+           "how to enter text, typeset formulas, include graphics, and provide a bibliography.")
+doc.append(NoEscape(r'\end{abstract}'))
+
+# Section 1
+with doc.create(Section("Coarse structure")):
+    doc.append("A LaTeX document consists of a preamble and the document proper. "
+               "The preamble consists of instructions only. The document proper is wrapped in "
+               "\\begin{document}...\\end{document}. Commands like \\documentclass[fleqn]{article} "
+               "are used to define the document class. The [fleqn] option flushes equations left.")
+    doc.append("\n\nAdditional packages can be loaded, such as for font encoding, graphics, or code listings.")
+
+# Section 2
+with doc.create(Section("How to type text")):
+    with doc.create(Subsection("Paragraphs")):
+        doc.append("Sentences are grouped into paragraphs. Each paragraph describes an idea. "
+                   "LaTeX breaks a paragraph into lines automatically. One or more empty lines or "
+                   "\\par starts a new paragraph. To prevent paragraph indentation and separate "
+                   "paragraphs with space:")
+        doc.append(NoEscape(r"""
+\begin{verbatim}
+\setlength{\parindent}{0mm}
+\setlength{\parskip}{1mm}
+\end{verbatim}
+"""))
+
+    with doc.create(Subsection("Subtleties")):
+        doc.append("Text is usually reproduced as typed, but spaces and punctuation can affect output. ")
+        doc.append("Use \\emph{emphasis} to emphasize, and \\underline{underline} to underline words. ")
+        doc.append("Use ~ to prevent line breaks, e.g., 12.3~mm. Dashes vary: - (hyphen), -- (en dash), "
+                   "--- (em dash). Example: As always---but not yesterday---the weather was fine.")
+
+# Generate the PDF (if you want to compile)
+# doc.generate_pdf("latex_article_first_two_pages", clean_tex=False)
