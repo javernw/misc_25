@@ -1,3 +1,24 @@
+Here’s the enhanced version with a clear purpose section incorporated into the write-up:
+
+⸻
+
+Threshold Tuning Cycle 1 – Sampling Approach
+
+The purpose of Threshold Tuning Cycle 1 was to refine the initial alert threshold settings established during Cycle 0. Cycle 0 was designed with intentionally wide-open threshold settings to ensure broad coverage of potential risk scenarios and to generate an initial alert population that could be analyzed for tuning purposes. Cycle 1 builds upon this by using the insights from Cycle 0 to begin narrowing thresholds and evaluating alert performance more systematically. The goal for Cycle 1 is to identify appropriate thresholds that balance effective risk detection with operational efficiency.
+
+The sampling approach for Cycle 1 was designed to ensure a representative and focused review of alert performance. The initial alert population consisted of all alerts where the customer scorecard severity level was 100 or higher. This resulted in a total of 936 alerts across various scores.
+
+To refine this population for sampling, we applied score-level thresholds consistent with those used in Cycle 0. Specifically, we filtered for alerts where the score values were greater than or equal to the threshold applied in Cycle 0 and less than or equal to the 25th percentile of the threshold range for each score. The 25th percentile was selected to target alerts near the lower end of the threshold range, allowing us to assess the appropriateness of settings for activity just above the minimum criteria. The thresholds were applied based on score-specific parameters (e.g., Parameter 1, Parameter 2, etc.), depending on the design and criteria of each score. This filtering reduced the population to just over 300 alerts that were eligible for sampling.
+
+From this refined alert population, we calculated a sample size of 115 alerts. This was determined using a 95% confidence level and a 5% margin of error, ensuring statistical validity of the sample. The sampling process was randomized, with sample volumes allocated proportionally across the different scores based on their representation within the filtered population.
+
+The sample of 115 alerts was provided to Operations for investigation. The feedback from Operations will be used to evaluate the appropriateness of the current threshold settings and guide fine-tuning for the next threshold tuning cycle. This structured sampling and review process helps ensure that tuning decisions are data-driven and aligned with risk management objectives.
+
+⸻
+
+If you’d like, I can help break this into slide bullets or add visual elements for clarity!
+
+
 Thanks for the clarification. Since you observed meaningful values in the 0.1% to 0.4% range, that tells us the distribution isn’t completely flat—but the lower tail is extremely compressed. Here’s the updated paragraph reflecting that nuance:
 
 ⸻
