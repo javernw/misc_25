@@ -1,5 +1,77 @@
 import pandas as pd
 
+# Example: your datasets list
+datasets = [df1, df2, df3, df4, df5, df6, df7]
+sample_sizes = [10, 15, 20, 10, 100, 20, 25]  # Example sample targets
+dataset_labels = ['df1', 'df2', 'df3', 'df4', 'df5', 'df6', 'df7']
+
+used_ids = set()
+samples = []
+
+for i, (df, requested_n) in enumerate(zip(datasets, sample_sizes)):
+    label = dataset_labels[i]
+
+    # Make sure 'date' column is datetime
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Create month_year column
+    df['month_year'] = df['date'].dt.to_period('M').astype(str)
+
+    if len(df) < 100:
+        # Small dataset: keep all rows
+        sample = df.copy()
+        sample['source_dataset'] = label
+        samples.append(sample)
+        continue
+
+    # Large dataset: enforce no repeated customer_id across large datasets
+    df_filtered = df[~df['customer_id'].isin(used_ids)]
+
+    # Drop duplicate customer_id, keep 1 row per ID randomly
+    df_shuffled = df_filtered.sample(frac=1, random_state=42)
+    df_unique = df_shuffled.drop_duplicates(subset='customer_id')
+
+    # Stratified sampling by month_year
+    month_counts = df_unique['month_year'].value_counts(normalize=True)
+
+    month_samples = []
+    for month, proportion in month_counts.items():
+        n_month = int(round(requested_n * proportion))
+        
+        df_month = df_unique[df_unique['month_year'] == month]
+        
+        # Ensure no oversampling
+        n_month = min(n_month, len(df_month))
+        
+        if n_month > 0:
+            month_sample = df_month.sample(n=n_month, random_state=42)
+            month_samples.append(month_sample)
+
+    # Combine stratified month samples
+    if month_samples:
+        sample = pd.concat(month_samples)
+    else:
+        sample = pd.DataFrame(columns=df.columns)
+
+    # Add source label
+    sample['source_dataset'] = label
+
+    # Update used IDs
+    used_ids.update(sample['customer_id'])
+
+    samples.append(sample)
+
+# Combine all samples
+final_sample = pd.concat(samples, ignore_index=True)
+
+# Output shape summary
+print(final_sample.shape)
+print(final_sample['source_dataset'].value_counts())
+
+
+import pandas as pd
+
 # Example list of DataFrames and sample sizes
 datasets = [df1, df2, df3, df4, df5, df6, df7]
 sample_sizes = [10, 15, 20, 10, 100, 20, 25]
