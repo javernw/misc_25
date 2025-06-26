@@ -1,3 +1,10 @@
+# If we didn’t hit the target size, top up randomly
+    shortfall = requested_n - len(strat_sample)
+    if shortfall > 0:
+        remaining = df_unique[~df_unique['customer_id'].isin(strat_sample['customer_id'])]
+        top_up = remaining.sample(n=min(shortfall, len(remaining)), random_state=42)
+        strat_sample = pd.concat([strat_sample, top_up]
+
 import pandas as pd
 
 # Example: your datasets list
