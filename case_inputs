@@ -1,0 +1,62 @@
+Sub SubmitCaseData()
+    Dim wsInput As Worksheet
+    Dim wsOutput As Worksheet
+    Dim nextRow As Long
+    Dim i As Long, rowOffset As Long
+    Dim missingFields As String
+    Dim headers As Variant
+    
+    Set wsInput = ThisWorkbook.Sheets("Sheet1")
+    Set wsOutput = ThisWorkbook.Sheets("Sheet2")
+
+    ' Check and add headers if not present
+    If wsOutput.Cells(1, 1).Value = "" Then
+        headers = Array("Timestamp", "Case ID", "Alert Date", "Suspicion Start", "Suspicion End", _
+                        "Case Narrative", "Key Closure Reason", "Outcome", "Outcome Definition", _
+                        "Typology 1", "Typology 2", "Typology 3", "Typology 4", "Typology 5", _
+                        "Typology 6", "Typology 7", "Typology 8", "Typology 9", "Typology 10")
+        For i = 0 To UBound(headers)
+            wsOutput.Cells(1, i + 1).Value = headers(i)
+        Next i
+    End If
+
+    ' Validate required fields
+    If Trim(wsInput.Range("C1").Value) = "" Then missingFields = missingFields & "• Case ID" & vbNewLine
+    If Trim(wsInput.Range("C2").Value) = "" Then missingFields = missingFields & "• Alert Date" & vbNewLine
+    If Trim(wsInput.Range("C7").Value) = "" Then missingFields = missingFields & "• Outcome" & vbNewLine
+
+    If missingFields <> "" Then
+        MsgBox "Please fill in the following required fields:" & vbNewLine & vbNewLine & missingFields, vbExclamation
+        Exit Sub
+    End If
+
+    ' Find next empty row
+    nextRow = wsOutput.Cells(wsOutput.Rows.Count, "A").End(xlUp).Row + 1
+
+    ' Write to Sheet2
+    With wsOutput
+        .Cells(nextRow, 1).Value = Now()                                 ' Timestamp
+        .Cells(nextRow, 2).Value = wsInput.Range("C1").Value             ' Case ID
+        .Cells(nextRow, 3).Value = wsInput.Range("C2").Value             ' Alert Date
+        .Cells(nextRow, 4).Value = wsInput.Range("C3").Value             ' Suspicion Start Date
+        .Cells(nextRow, 5).Value = wsInput.Range("C4").Value             ' Suspicion End Date
+        .Cells(nextRow, 6).Value = wsInput.Range("C5").Value             ' Case Narrative
+        .Cells(nextRow, 7).Value = wsInput.Range("C6").Value             ' Key Closure Reason
+        .Cells(nextRow, 8).Value = wsInput.Range("C7").Value             ' Outcome
+        .Cells(nextRow, 9).Value = wsInput.Range("C8").Value             ' Outcome Definition
+
+        ' Typology Checkboxes (C10 to C19)
+        rowOffset = 10
+        For i = 1 To 10
+            .Cells(nextRow, 9 + i).Value = IIf(wsInput.Range("C" & (rowOffset + i - 1)).Value = True, "Y", "N")
+        Next i
+    End With
+
+    ' Clear form
+    wsInput.Range("C1:C8").ClearContents
+    For i = 1 To 10
+        wsInput.Range("C" & (rowOffset + i - 1)).Value = False
+    Next i
+
+    MsgBox "Case data submitted successfully!", vbInformation
+End Sub
