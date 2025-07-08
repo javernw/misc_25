@@ -1,3 +1,19 @@
+Dim lastCheckboxRow As Long
+Dim checkboxStartRow As Long
+Dim totalCheckboxes As Long
+
+checkboxStartRow = 10  ' Start of checkbox section
+' Find the last label row in column B starting from row 10
+lastCheckboxRow = wsInput.Cells(wsInput.Rows.Count, "B").End(xlUp).Row
+
+' Calculate number of checkboxes
+totalCheckboxes = lastCheckboxRow - checkboxStartRow + 1
+
+For i = 1 To totalCheckboxes
+    .Cells(nextRow, 9 + i).Value = IIf(wsInput.Range("C" & (checkboxStartRow + i - 1)).Value = True, "Y", "N")
+Next i
+
+
 Sub SubmitCaseData()
     Dim wsInput As Worksheet
     Dim wsOutput As Worksheet
