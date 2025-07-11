@@ -1,3 +1,44 @@
+📅 1. Date Submitted
+	•	This field will be automatically populated with the date and time you click the Submit button.
+	•	No manual entry is required.
+
+⸻
+
+👤 2. Assigned To
+	•	Enter your name or the investigator’s name responsible for reviewing the case.
+
+⸻
+
+📆 3. Review Period Start and End Date
+	•	Enter the start and end dates for the full review period being analyzed.
+
+⸻
+
+⚠️ 4. Suspicion Period Start and End Date
+	•	These dates must be within the Review Period you entered above.
+	•	If the suspicious period dates fall outside the review period, a validation error will appear asking you to correct the entries.
+
+⸻
+
+📋 5. Key Closure Reason and Outcome
+	•	Select an option from the drop-down menu provided in each cell.
+	•	These are predefined options — no free text is allowed in these fields.
+
+⸻
+
+📚 6. Outcome Definition
+	•	Enter a short explanation of the selected outcome in your own words.
+
+⸻
+
+✅ 7. Y/N Selections (Right-side Columns)
+	•	For the Relevant Typologies section and other checkbox-style fields:
+	•	Use the drop-down menus in each row to select either “Y” (Yes) or “N” (No).
+	•	Do not type manually — always select from the menu.
+
+
+
+
 Dim lastCheckboxRow As Long
 Dim checkboxStartRow As Long
 Dim totalCheckboxes As Long
