@@ -1,0 +1,286 @@
+import re
+import string
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+import pandas as pd
+
+# ==============================
+# YOU: set these
+# ==============================
+# 1) Your narratives dataframe (already loaded)
+#    Must contain columns below (rename if needed).
+NARRATIVES_DF   = ...  # e.g., pd.read_excel("narratives.xlsx")
+CASE_ID_COL     = "CaseID"
+NARRATIVE_COL   = "Narrative"
+
+# 2) Your keyword dataframes (already loaded) — in the SAME ORDER as typology names.
+#    Example:
+#    cyber_df, crypto_df, drugs_df = ...
+KEYWORD_DFS = [
+    # cyber_df,
+    # crypto_df,
+    # drugs_df,
+    # ecomm_df,
+    # enviro_df,
+    # sehrs_df,
+    # fintech_df,
+    # gambling_df,
+    # ... (add the rest)
+]
+
+# 3) Typology names aligned 1–to–1 with KEYWORD_DFS
+TYPOLOGY_NAMES = [
+    # "Cyber",
+    # "Crypto",
+    # "Drugs",
+    # "Ecomm",
+    # "Enviro",
+    # "SEHRS",
+    # "FinTech",
+    # "Gambling",
+    # ... (add the rest)
+]
+
+# 4) Column positions to keep/rename in each keyword DF (handles mixed layouts)
+#    Example: column 0 -> "Keywords", column 2 -> "Weight"
+POSITION_TO_NEW_NAME = {0: "Keywords", 2: "Weight"}
+
+# 5) Dtypes to enforce on selected columns
+DTYPE_MAP = {"Keywords": str, "Weight": float}  # optional: {"is_regex": bool}
+
+# 6) Output file
+OUTPUT_XLSX = r"path\to\final_keyword_scoring.xlsx"
+
+# 7) Matching knobs
+NORMALIZE_JOINERS = True            # turn "- _ /" into spaces in narratives before matching
+AUTO_EXPAND_SPACED_KEYWORDS = True  # "gift cards" matches gift cards | gift-cards | giftcards
+
+# ==============================
+# Optional: spaCy NER for redaction (PERSON, ORG, etc.)
+# ==============================
+try:
+    import spacy
+    try:
+        _nlp = spacy.load("en_core_web_sm")
+    except Exception:
+        _nlp = None
+except Exception:
+    _nlp = None
+
+EMAIL_RE   = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", re.IGNORECASE)
+URL_RE     = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+JOINERS_RE = re.compile(r"[-_/]")
+NER_LABELS_TO_REDACT = {"PERSON", "GPE", "LOC", "ORG", "NORP", "FAC"}
+
+def clean_text(text: object, nlp: Optional[object] = _nlp) -> str:
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    s = EMAIL_RE.sub(" ", text)
+    s = URL_RE.sub(" ", s)
+    if nlp:
+        doc = nlp(s)
+        s = " ".join(tok.text for tok in doc if tok.ent_type_ not in NER_LABELS_TO_REDACT)
+    s = re.sub(f"[{re.escape(string.punctuation)}0-9]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s
+
+def prep_keyword_dfs(
+    df_list: List[pd.DataFrame],
+    position_to_new_name: Dict[int, str],
+    dtype_map: Dict[str, type]
+) -> List[pd.DataFrame]:
+    updated = []
+    for df in df_list:
+        df = df.copy()
+        rename_mapping = {
+            df.columns[pos]: new_name
+            for pos, new_name in position_to_new_name.items()
+            if pos < len(df.columns)
+        }
+        if not rename_mapping:
+            raise ValueError("A keyword DF had no columns matching POSITION_TO_NEW_NAME.")
+        df = df.rename(columns=rename_mapping)
+        selected_cols = [new for _, new in sorted(position_to_new_name.items(), key=lambda x: x[0])]
+        selected_cols = [c for c in selected_cols if c in df.columns]
+        df = df[selected_cols]
+        for col, dtype in dtype_map.items():
+            if col in df.columns:
+                if dtype == float:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+                elif dtype == bool:
+                    df[col] = df[col].apply(lambda x: str(x).strip().lower() in {"1","true","t","yes","y"})
+                else:
+                    df[col] = df[col].astype(dtype, errors="ignore")
+        if "Keywords" in df.columns:
+            df["Keywords"] = df["Keywords"].astype(str).str.strip()
+            df = df[df["Keywords"].str.len() > 0].reset_index(drop=True)
+        updated.append(df)
+    return updated
+
+def build_flexible_regex_from_keyword(kw: str) -> str:
+    kw = kw.strip()
+    if not kw:
+        return r"$^"
+    if AUTO_EXPAND_SPACED_KEYWORDS and " " in kw:
+        parts = [re.escape(p) for p in kw.split()]
+        between = r"(?:[\s-]|)"
+        return r"\b" + between.join(parts) + r"\b"
+    return r"\b" + re.escape(kw) + r"\b"
+
+def compile_keyword_pattern(kw: str, is_regex: bool) -> re.Pattern:
+    if is_regex:
+        return re.compile(kw, flags=re.IGNORECASE)
+    return re.compile(build_flexible_regex_from_keyword(kw), flags=re.IGNORECASE)
+
+def normalize_for_match(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    s = text
+    if NORMALIZE_JOINERS:
+        s = JOINERS_RE.sub(" ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def count_occurrences(text: str, pattern: re.Pattern) -> int:
+    return len(pattern.findall(text)) if text else 0
+
+def score_narratives(
+    narratives_df: pd.DataFrame,
+    keyword_dfs: List[pd.DataFrame],
+    typology_names: List[str],
+    case_id_col: str,
+    narrative_col: str
+) -> pd.DataFrame:
+    if len(keyword_dfs) != len(typology_names):
+        raise ValueError("KEYWORD_DFS and TYPOLOGY_NAMES must have the same length/order.")
+
+    # Compile patterns per typology
+    typology_dict = {}
+    for name, tdf in zip(typology_names, keyword_dfs):
+        tdf = tdf.copy()
+        if "Keywords" not in tdf.columns or "Weight" not in tdf.columns:
+            raise ValueError(f"Typology '{name}' must have 'Keywords' and 'Weight' columns after prep.")
+        if "is_regex" not in tdf.columns:
+            tdf["is_regex"] = False
+        tdf["Keywords"] = tdf["Keywords"].astype(str).str.strip()
+        tdf["Weight"]   = pd.to_numeric(tdf["Weight"], errors="coerce").fillna(0.0)
+        tdf["is_regex"] = tdf["is_regex"].astype(bool)
+        tdf["pattern"]  = tdf.apply(lambda r: compile_keyword_pattern(r["Keywords"], r["is_regex"]), axis=1)
+        typology_dict[name] = tdf.reset_index(drop=True)
+
+    df = narratives_df.copy()
+    if case_id_col not in df.columns or narrative_col not in df.columns:
+        raise ValueError(f"Narratives DF must have '{case_id_col}' and '{narrative_col}' columns.")
+    df["_CleanNarrative"] = df[narrative_col].apply(clean_text)
+    df["_MatchText"]      = df["_CleanNarrative"].apply(normalize_for_match)
+
+    rows = []
+    for _, row in df.iterrows():
+        case_id   = row[case_id_col]
+        raw_text  = row[narrative_col] if isinstance(row[narrative_col], str) else ""
+        match_txt = row["_MatchText"]
+
+        out = {case_id_col: case_id, narrative_col: raw_text}
+        grand_total_count  = 0
+        grand_total_words  = 0
+        grand_total_weight = 0.0
+
+        for typology, tdf in typology_dict.items():
+            matched_keywords, counts_pairs, weights_pairs = [], [], []
+            total_occ, total_weight = 0, 0.0
+
+            for _, kwr in tdf.iterrows():
+                kw, w, pat = kwr["Keywords"], float(kwr["Weight"]), kwr["pattern"]
+                occ = count_occurrences(match_txt, pat)
+                if occ > 0:
+                    matched_keywords.append(kw)
+                    counts_pairs.append((kw, occ))
+                    weights_pairs.append((kw, w))
+                    total_occ += occ
+                    total_weight += occ * w
+
+            total_words = len(matched_keywords)
+
+            grand_total_count  += total_occ
+            grand_total_words  += total_words
+            grand_total_weight += total_weight
+
+            out[f"{typology}_keywords"]        = ", ".join(matched_keywords) if matched_keywords else "(none)"
+            out[f"{typology}_count_each"]      = "; ".join(f"{k}:{v}" for k, v in counts_pairs)
+            out[f"{typology}_weight_each"]     = "; ".join(f"{k}:{v}" for k, v in weights_pairs)
+            out[f"{typology}_total_count"]     = int(total_occ)
+            out[f"{typology}_total_words"]     = int(total_words)
+            out[f"{typology}_total_weight"]    = round(total_weight, 6)
+
+        out["total_keyword_count_all_typologies"]  = int(grand_total_count)
+        out["total_keyword_words_all_typologies"]  = int(grand_total_words)
+        out["total_keyword_weight_all_typologies"] = round(grand_total_weight, 6)
+        rows.append(out)
+
+    final_df = pd.DataFrame(rows)
+
+    # Order columns
+    first_cols = [case_id_col, narrative_col]
+    typology_cols = []
+    for name in typology_names:
+        typology_cols.extend([
+            f"{name}_keywords",
+            f"{name}_count_each",
+            f"{name}_weight_each",
+            f"{name}_total_count",
+            f"{name}_total_words",
+            f"{name}_total_weight",
+        ])
+    tail_cols = [
+        "total_keyword_count_all_typologies",
+        "total_keyword_words_all_typologies",
+        "total_keyword_weight_all_typologies",
+    ]
+    for c in first_cols + typology_cols + tail_cols:
+        if c not in final_df.columns:
+            final_df[c] = "" if c.endswith(("keywords","count_each","weight_each")) else 0
+    final_df = final_df[first_cols + typology_cols + tail_cols]
+    return final_df
+
+# ==============================
+# MAIN (uses your in-memory DFs)
+# ==============================
+def run_scoring():
+    # 1) Validate inputs
+    if not isinstance(NARRATIVES_DF, pd.DataFrame):
+        raise ValueError("NARRATIVES_DF must be a DataFrame.")
+    if len(KEYWORD_DFS) == 0:
+        raise ValueError("KEYWORD_DFS is empty. Provide your keyword DataFrames.")
+    if len(KEYWORD_DFS) != len(TYPOLOGY_NAMES):
+        raise ValueError("KEYWORD_DFS and TYPOLOGY_NAMES must be the same length and order.")
+
+    # 2) Prep keyword DFs (rename/select/cast)
+    prepared_keyword_dfs = prep_keyword_dfs(KEYWORD_DFS, POSITION_TO_NEW_NAME, DTYPE_MAP)
+
+    # 3) Score
+    final_df = score_narratives(
+        NARRATIVES_DF[[CASE_ID_COL, NARRATIVE_COL]].copy(),
+        prepared_keyword_dfs,
+        TYPOLOGY_NAMES,
+        CASE_ID_COL,
+        NARRATIVE_COL
+    )
+
+    # 4) Save
+    out_path = Path(OUTPUT_XLSX)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+        final_df.to_excel(writer, index=False, sheet_name="final_scored")
+
+    # 5) Lightweight summary to console
+    print(f"[OK] Wrote: {out_path}")
+    print(f"[Rows] Narratives: {len(final_df)}")
+    # Per-typology hit rates
+    for name in TYPOLOGY_NAMES:
+        hits = (final_df[f"{name}_total_words"] > 0).sum()
+        print(f"   - {name:20s} matched in {hits} narratives")
+
+    return final_df
+
+# Uncomment to run:
+# final_df = run_scoring()
