@@ -1,0 +1,31 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+scores = df_auto_max["max_score"]
+
+# Example: if you've computed this already
+# cutoff_score = percentile_df.loc[percentile_df['percentile'] == 10, 'auto_lowest_max_score'].iloc[0]
+
+plt.figure(figsize=(10,6))
+
+# Plot histogram first and capture bin edges/heights
+counts, bins, patches = plt.hist(scores, bins=50, edgecolor='black', alpha=0.7)
+
+# Shade region below cutoff
+plt.axvspan(
+    xmin=min(scores), xmax=cutoff_score,
+    color='red', alpha=0.2,
+    label=f"Below cutoff (<= {cutoff_score:.3f})"
+)
+
+# Vertical line marking cutoff
+plt.axvline(cutoff_score, color='red', linewidth=2, linestyle='--')
+
+# Titles and labels
+plt.title("Distribution of Maximum Auto SAR Scores per Customer")
+plt.xlabel("Max Score")
+plt.ylabel("Number of Customers")
+plt.legend()
+plt.grid(axis='y', alpha=0.3)
+plt.tight_layout()
+plt.show()
