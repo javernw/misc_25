@@ -73,3 +73,23 @@ monthly_max = (
     )
 )
 
+
+# Ensure numeric
+    merged["global_max_score"] = pd.to_numeric(merged["global_max_score"], errors="coerce")
+    merged["monthly_max_score"] = pd.to_numeric(merged["monthly_max_score"], errors="coerce")
+
+    # 3) Decide if this month updates the global max
+    # update if:
+    # - global is missing and monthly exists, OR
+    # - monthly > global
+    update_mask = (
+        merged["monthly_max_score"].notna()
+        & (merged["global_max_score"].isna() | (merged["monthly_max_score"] > merged["global_max_score"]))
+    )
+
+    # 4) Update global score and month
+    merged.loc[update_mask, "global_max_score"] = merged.loc[update_mask, "monthly_max_score"]
+    merged.loc[update_mask, "global_max_month"] = merged.loc[update_mask, "monthly_max_month"]
+
+    # 5) Keep on
+
