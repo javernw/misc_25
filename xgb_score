@@ -29,3 +29,47 @@ plt.legend()
 plt.grid(axis='y', alpha=0.3)
 plt.tight_layout()
 plt.show()
+
+
+import pandas as pd
+
+global_max = pd.DataFrame(
+    columns=["party_key", "pty_id", "global_max_score"]
+)
+
+def update_global_max(global_max, monthly_df):
+    # 1. Aggregate within the month
+    monthly_max = (
+        monthly_df
+        .groupby(["party_key", "pty_id"], as_index=False)
+        .agg(monthly_max_score=("score", "max"))
+    )
+
+    # 2. Merge with global table
+    merged = global_max.merge(
+        monthly_max,
+        on=["party_key", "pty_id"],
+        how="outer"
+    )
+
+    # 3. Update the global max score
+    merged["global_max_score"] = merged[
+        ["global_max_score", "monthly_max_score"]
+    ].max(axis=1)
+
+    # 4. Keep only required columns
+    return merged[["party_key", "pty_id", "global_max_score"]]
+
+for path in monthly_file_paths:
+    monthly_df = pd.read_parquet(path)  # or read_csv
+    global_max = update_global_max(global_max, monthly_df)
+
+monthly_max = (
+    monthly_df
+    .groupby(["party_key", "pty_id"], as_index=False)
+    .agg(
+        monthly_max_score=("score", "max"),
+        max_score_month=("month", "first")
+    )
+)
+
