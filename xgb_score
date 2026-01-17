@@ -93,3 +93,117 @@ monthly_max = (
 
     # 5) Keep on
 
+
+
+import pandas as pd
+import numpy as np
+import shap
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+
+# ---- output schema ----
+out_schema = StructType([
+    StructField("account_id", StringType(), False),
+    StructField("score_date", StringType(), False),   # keep as string for simplicity
+    StructField("feature", StringType(), False),
+    StructField("shap_value", DoubleType(), True),
+    StructField("abs_shap", DoubleType(), True),
+    StructField("feature_value", DoubleType(), True),
+    StructField("risk_score", DoubleType(), True),
+    StructField("rank", IntegerType(), True),
+])
+
+# You must have:
+# - trained_model (XGBoost/LightGBM tree model compatible with shap.TreeExplainer)
+# - feature_cols (list of feature columns in correct training order)
+# - id_cols = ["account_id","score_date","risk_score"]
+# - K (int)
+
+def shap_topk_map(pdf_iter, K=10):
+    """
+    Map iterator of pandas DataFrames -> yields pandas DataFrame of Top-K SHAP features per row.
+    Assumes incoming pdf columns include: account_id, score_date, risk_score + feature_cols
+    """
+    explainer = shap.TreeExplainer(trained_model)
+
+    for pdf in pdf_iter:
+        # Ensure consistent ordering + numeric types
+        X = pdf[feature_cols].astype(float)
+
+        # Compute SHAP: shape (n_rows, n_features) for binary models (common)
+        shap_vals = explainer.shap_values(X)
+
+        # Some SHAP versions return a list for multiclass; handle safely
+        if isinstance(shap_vals, list):
+            # choose class 1 by convention (adjust if needed)
+            shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+
+        X_np = X.to_numpy()
+        abs_shap = np.abs(shap_vals)
+
+        out_rows = []
+        n_rows = X_np.shape[0]
+
+        for i in range(n_rows):
+            acct = str(pdf.iloc[i]["account_id"])
+            dt = str(pdf.iloc[i]["score_date"])
+            rs = float(pdf.iloc[i]["risk_score"])
+
+            # Get top-K indices by |SHAP| (fast)
+            # argpartition is O(n) vs argsort O(n log n)
+            k = min(K, abs_shap.shape[1])
+            top_idx = np.argpartition(abs_shap[i], -k)[-k:]
+            # Sort those top indices by descending |SHAP|
+            top_idx = top_idx[np.argsort(abs_shap[i][top_idx])[::-1]]
+
+            for rnk, j in enumerate(top_idx, start=1):
+                out_rows.append((
+                    acct,
+                    dt,
+                    feature_cols[j],
+                    float(shap_vals[i][j]),
+                    float(abs_shap[i][j]),
+                    float(X_np[i][j]),
+                    rs,
+                    int(rnk)
+                ))
+
+        yield pd.DataFrame(
+            out_rows,
+            columns=["account_id","score_date","feature","shap_value","abs_shap","feature_value","risk_score","rank"]
+        )
+K = 10
+
+df_shap_topk = (
+    df_cohort
+    .select("account_id","score_date","risk_score", *feature_cols)
+    .mapInPandas(lambda it: shap_topk_map(it, K=K), schema=out_schema)
+)
+
+df_shap_topk.show(50, truncate=False)
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# Collect top-K features as a set per account/day
+df_topk_set = (
+    df_shap_topk
+    .groupBy("account_id", "score_date")
+    .agg(F.collect_set("feature").alias("top_features"))
+)
+
+# Compare with previous day
+w = Window.partitionBy("account_id").orderBy("score_date")
+
+df_sim = (
+    df_topk_set
+    .withColumn("prev_features", F.lag("top_features").over(w))
+    .filter(F.col("prev_features").isNotNull())
+    .withColumn("intersect_n", F.size(F.array_intersect("top_features","prev_features")))
+    .withColumn("union_n", F.size(F.array_union("top_features","prev_features")))
+    .withColumn("jaccard", F.col("intersect_n") / F.col("union_n"))
+)
+
+df_sim.select("account_id","score_date","jaccard").show(50, truncate=False)
+
+
+
