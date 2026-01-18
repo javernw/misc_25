@@ -205,5 +205,49 @@ df_sim = (
 
 df_sim.select("account_id","score_date","jaccard").show(50, truncate=False)
 
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
+JACCARD_THRESH = 0.7
+
+# Window across days per account
+w_day = Window.partitionBy("account_id").orderBy("score_date")
+
+# Join the similarity back onto the per-day table so the FIRST DAY is included
+df_event_base = (
+    df_topk_set.alias("cur")
+    .join(
+        df_sim.select("account_id", "score_date", "jaccard").alias("sim"),
+        on=["account_id", "score_date"],
+        how="left"   # first day has no jaccard; will be null
+    )
+)
+
+# Flag where a new event starts:
+# - first day (jaccard is null) => new event
+# - or similarity below threshold => new event
+df_event_flagged = (
+    df_event_base
+    .withColumn(
+        "is_new_event",
+        F.when(F.col("jaccard").isNull(), F.lit(1))
+         .when(F.col("jaccard") < F.lit(JACCARD_THRESH), F.lit(1))
+         .otherwise(F.lit(0))
+    )
+)
+
+# Cumulative sum of new-event flags gives event sequence number per account
+df_event_labeled = (
+    df_event_flagged
+    .withColumn(
+        "event_seq",
+        F.sum("is_new_event").over(w_day.rowsBetween(Window.unboundedPreceding, Window.currentRow))
+    )
+    .withColumn(
+        "event_id",
+        F.concat_ws("_", F.col("account_id"), F.col("event_seq").cast("string"))
+    )
+)
+
+df_event_labeled.select("account_id", "score_date", "jaccard", "is_new_event", "event_seq", "event_id").orderBy("account_id", "score_date").show(200, truncate=False)
 
