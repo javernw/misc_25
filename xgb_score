@@ -1,4 +1,4 @@
-import matplotlib.pyplot as plt
+jk import matplotlib.pyplot as plt
 import numpy as np
 
 scores = df_auto_max["max_score"]
@@ -251,3 +251,36 @@ df_event_labeled = (
 
 df_event_labeled.select("account_id", "score_date", "jaccard", "is_new_event", "event_seq", "event_id").orderBy("account_id", "score_date").show(200, truncate=False)
 
+
+from pyspark.sql import functions as F
+
+id_cols = ["customer_id", "account_id", "score_date", "xgb_score"]
+
+df_wide = (
+    df
+    .groupBy(*id_cols)
+    .pivot("feature")   # optionally provide a fixed list for stability/perf
+    .agg(
+        F.first(
+            F.struct(
+                F.col("feature_value").alias("value"),
+                F.col("shap_value").alias("shap"),
+                F.col("abs_shap").alias("abs_shap"),
+                F.col("rank").alias("rank")
+            ),
+            ignorenulls=True
+        )
+    )
+)
+
+feature_cols = [c for c in df_wide.columns if c not in id_cols]
+
+# create separate columns for each struct field
+for c in feature_cols:
+    df_wide = (df_wide
+        .withColumn(f"{c}__value", F.col(c)["value"])
+        .withColumn(f"{c}__shap", F.col(c)["shap"])
+        .withColumn(f"{c}__abs_shap", F.col(c)["abs_shap"])
+        .withColumn(f"{c}__rank", F.col(c)["rank"])
+        .drop(c)
+    )
