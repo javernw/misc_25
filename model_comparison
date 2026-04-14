@@ -1,0 +1,1172 @@
+Below is a pandas template pack you can use to compare iteration 1 vs iteration 2 from simple checks through more advanced analysis.
+
+I’m assuming you have something like:
+	•	acct_id
+	•	score_date
+	•	xgb_score
+	•	maybe sar_label
+	•	maybe sar_type
+	•	maybe suspicious window columns later
+
+I’ll keep it modular so you can copy pieces as needed.
+
+⸻
+
+1. Setup
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Optional display settings
+pd.set_option("display.max_columns", 200)
+pd.set_option("display.width", 200)
+
+
+⸻
+
+2. Example input structure
+
+Assume:
+	•	df_iter1 = iteration 1 scored output
+	•	df_iter2 = iteration 2 scored output
+
+Each has one row per account-date.
+
+# Example expected columns
+# acct_id, score_date, xgb_score, sar_label, sar_type, segment
+
+df_iter1["score_date"] = pd.to_datetime(df_iter1["score_date"])
+df_iter2["score_date"] = pd.to_datetime(df_iter2["score_date"])
+
+df_iter1["iteration"] = "iter1"
+df_iter2["iteration"] = "iter2"
+
+
+⸻
+
+3. Population overlap
+
+Start here first.
+
+acct1 = set(df_iter1["acct_id"].unique())
+acct2 = set(df_iter2["acct_id"].unique())
+
+common_accts = acct1 & acct2
+dropped_accts = acct1 - acct2
+new_accts = acct2 - acct1
+
+pop_summary = pd.DataFrame({
+    "metric": ["iter1_accounts", "iter2_accounts", "common_accounts", "dropped_from_iter1", "new_in_iter2"],
+    "value": [len(acct1), len(acct2), len(common_accts), len(dropped_accts), len(new_accts)]
+})
+
+pop_summary["pct_of_iter1"] = np.where(
+    pop_summary["metric"].isin(["common_accounts", "dropped_from_iter1"]),
+    pop_summary["value"] / len(acct1),
+    np.nan
+)
+
+pop_summary["pct_of_iter2"] = np.where(
+    pop_summary["metric"].isin(["common_accounts", "new_in_iter2"]),
+    pop_summary["value"] / len(acct2),
+    np.nan
+)
+
+print(pop_summary)
+
+To save lists:
+
+df_common = pd.DataFrame({"acct_id": sorted(common_accts)})
+df_dropped = pd.DataFrame({"acct_id": sorted(dropped_accts)})
+df_new = pd.DataFrame({"acct_id": sorted(new_accts)})
+
+
+⸻
+
+4. Compare max score per account
+
+This is usually the cleanest comparison.
+
+max1 = (
+    df_iter1.groupby("acct_id", as_index=False)
+    .agg(
+        iter1_max_score=("xgb_score", "max"),
+        iter1_max_score_date=("score_date", "max")  # temporary placeholder, fix below
+    )
+)
+
+# Proper max-score-date logic
+idx1 = df_iter1.groupby("acct_id")["xgb_score"].idxmax()
+max1 = (
+    df_iter1.loc[idx1, ["acct_id", "score_date", "xgb_score"]]
+    .rename(columns={
+        "score_date": "iter1_max_score_date",
+        "xgb_score": "iter1_max_score"
+    })
+)
+
+idx2 = df_iter2.groupby("acct_id")["xgb_score"].idxmax()
+max2 = (
+    df_iter2.loc[idx2, ["acct_id", "score_date", "xgb_score"]]
+    .rename(columns={
+        "score_date": "iter2_max_score_date",
+        "xgb_score": "iter2_max_score"
+    })
+)
+
+max_compare = max1.merge(max2, on="acct_id", how="outer")
+
+max_compare["acct_status"] = np.select(
+    [
+        max_compare["iter1_max_score"].notna() & max_compare["iter2_max_score"].notna(),
+        max_compare["iter1_max_score"].notna() & max_compare["iter2_max_score"].isna(),
+        max_compare["iter1_max_score"].isna() & max_compare["iter2_max_score"].notna(),
+    ],
+    [
+        "common",
+        "dropped",
+        "new"
+    ],
+    default="unknown"
+)
+
+max_compare.head()
+
+
+⸻
+
+5. Score drift for common accounts
+
+common_max = max_compare[max_compare["acct_status"] == "common"].copy()
+
+common_max["score_diff"] = common_max["iter2_max_score"] - common_max["iter1_max_score"]
+common_max["score_diff_abs"] = common_max["score_diff"].abs()
+
+common_max["score_diff_pct"] = np.where(
+    common_max["iter1_max_score"] != 0,
+    (common_max["iter2_max_score"] - common_max["iter1_max_score"]) / common_max["iter1_max_score"],
+    np.nan
+)
+
+print(common_max[["iter1_max_score", "iter2_max_score", "score_diff"]].describe())
+
+Simple buckets:
+
+conditions = [
+    common_max["score_diff"] > 0.10,
+    common_max["score_diff"] < -0.10
+]
+
+choices = ["increased materially", "decreased materially"]
+
+common_max["score_movement"] = np.select(conditions, choices, default="roughly stable")
+
+common_max["score_movement"].value_counts(dropna=False)
+
+
+⸻
+
+6. Max score date shift
+
+This will help with earlier vs later detection.
+
+common_max["date_shift_days"] = (
+    common_max["iter2_max_score_date"] - common_max["iter1_max_score_date"]
+).dt.days
+
+def classify_date_shift(x):
+    if pd.isna(x):
+        return np.nan
+    elif x < 0:
+        return "earlier in iter2"
+    elif x > 0:
+        return "later in iter2"
+    else:
+        return "same date"
+
+common_max["date_shift_bucket"] = common_max["date_shift_days"].apply(classify_date_shift)
+
+print(common_max["date_shift_bucket"].value_counts(dropna=False))
+print(common_max["date_shift_days"].describe())
+
+
+⸻
+
+7. Percentile/rank stability
+
+This is very useful and easy to explain.
+
+common_max["iter1_pct_rank"] = common_max["iter1_max_score"].rank(pct=True)
+common_max["iter2_pct_rank"] = common_max["iter2_max_score"].rank(pct=True)
+
+def risk_band(p):
+    if pd.isna(p):
+        return np.nan
+    elif p < 0.50:
+        return "low"
+    elif p < 0.90:
+        return "medium"
+    else:
+        return "high"
+
+common_max["iter1_band"] = common_max["iter1_pct_rank"].apply(risk_band)
+common_max["iter2_band"] = common_max["iter2_pct_rank"].apply(risk_band)
+
+band_transition = pd.crosstab(common_max["iter1_band"], common_max["iter2_band"], margins=True)
+print(band_transition)
+
+Add exact flips:
+
+common_max["band_changed"] = common_max["iter1_band"] != common_max["iter2_band"]
+common_max["band_changed"].value_counts(normalize=True)
+
+
+⸻
+
+8. Score distribution comparison
+
+Use all rows or max-per-account depending on your purpose. Usually max-per-account is cleaner.
+
+plt.figure(figsize=(8,5))
+plt.hist(max1["iter1_max_score"], bins=50, alpha=0.6, label="Iter 1")
+plt.hist(max2["iter2_max_score"], bins=50, alpha=0.6, label="Iter 2")
+plt.xlabel("Max Score")
+plt.ylabel("Count")
+plt.title("Max Score Distribution by Iteration")
+plt.legend()
+plt.show()
+
+Percentiles:
+
+percentiles = [0.50, 0.75, 0.90, 0.95, 0.99]
+
+dist_summary = pd.DataFrame({
+    "percentile": percentiles,
+    "iter1": [max1["iter1_max_score"].quantile(p) for p in percentiles],
+    "iter2": [max2["iter2_max_score"].quantile(p) for p in percentiles],
+})
+
+print(dist_summary)
+
+
+⸻
+
+9. Recreate account-level time series for returned accounts
+
+This is what you mentioned around score drift over time.
+
+Merge both iterations by account-date
+
+ts_compare = (
+    df_iter1[["acct_id", "score_date", "xgb_score"]]
+    .rename(columns={"xgb_score": "iter1_score"})
+    .merge(
+        df_iter2[["acct_id", "score_date", "xgb_score"]].rename(columns={"xgb_score": "iter2_score"}),
+        on=["acct_id", "score_date"],
+        how="outer"
+    )
+)
+
+ts_compare["acct_in_both"] = ts_compare["acct_id"].isin(common_accts)
+ts_compare = ts_compare[ts_compare["acct_in_both"]].copy()
+
+ts_compare["score_diff"] = ts_compare["iter2_score"] - ts_compare["iter1_score"]
+ts_compare.head()
+
+
+⸻
+
+10. Plot score time series for one account
+
+def plot_account_timeseries(acct_id, df_ts):
+    temp = df_ts[df_ts["acct_id"] == acct_id].sort_values("score_date")
+    
+    plt.figure(figsize=(10,5))
+    plt.plot(temp["score_date"], temp["iter1_score"], marker="o", label="Iter 1")
+    plt.plot(temp["score_date"], temp["iter2_score"], marker="o", label="Iter 2")
+    plt.title(f"Score Time Series: {acct_id}")
+    plt.xlabel("Score Date")
+    plt.ylabel("Score")
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+Example:
+
+sample_acct = list(common_accts)[0]
+plot_account_timeseries(sample_acct, ts_compare)
+
+
+⸻
+
+11. Time series drift metrics per account
+
+This gives you summary stats for accounts that returned.
+
+def summarize_ts(group):
+    out = {}
+    out["n_dates"] = group["score_date"].nunique()
+    out["iter1_mean"] = group["iter1_score"].mean()
+    out["iter2_mean"] = group["iter2_score"].mean()
+    out["mean_diff"] = out["iter2_mean"] - out["iter1_mean"]
+    out["iter1_std"] = group["iter1_score"].std()
+    out["iter2_std"] = group["iter2_score"].std()
+    
+    valid = group[["iter1_score", "iter2_score"]].dropna()
+    if len(valid) >= 2:
+        out["corr"] = valid["iter1_score"].corr(valid["iter2_score"])
+    else:
+        out["corr"] = np.nan
+    
+    return pd.Series(out)
+
+acct_ts_summary = (
+    ts_compare.groupby("acct_id")
+    .apply(summarize_ts)
+    .reset_index()
+)
+
+acct_ts_summary.head()
+
+Interpretation:
+	•	mean_diff > 0: account tends to score higher in iter2
+	•	corr high: shape of score movement over time is similar
+	•	corr low: iter2 is seeing risk differently
+
+⸻
+
+12. Find accounts with biggest changes
+
+Useful for case studies.
+
+biggest_increases = common_max.sort_values("score_diff", ascending=False).head(20)
+biggest_decreases = common_max.sort_values("score_diff", ascending=True).head(20)
+largest_date_shifts = common_max.reindex(common_max["date_shift_days"].abs().sort_values(ascending=False).index).head(20)
+
+
+⸻
+
+13. Compare auto SAR populations
+
+If sar_type exists and auto SAR is at account-level:
+
+auto1 = set(df_iter1.loc[df_iter1["sar_type"] == "Auto SAR", "acct_id"].unique())
+auto2 = set(df_iter2.loc[df_iter2["sar_type"] == "Auto SAR", "acct_id"].unique())
+
+auto_summary = pd.DataFrame({
+    "metric": ["auto_sar_iter1", "auto_sar_iter2", "auto_sar_common", "auto_sar_dropped", "auto_sar_new"],
+    "value": [
+        len(auto1),
+        len(auto2),
+        len(auto1 & auto2),
+        len(auto1 - auto2),
+        len(auto2 - auto1)
+    ]
+})
+
+print(auto_summary)
+
+This helps answer the exact question around 1065 -> 891.
+
+⸻
+
+14. Detection window alignment
+
+If you have:
+	•	min_suspicious_date
+	•	max_suspicious_date
+
+Attach those to the max-score tables.
+
+# Suppose sar_window has acct_id, min_suspicious_date, max_suspicious_date
+sar_window["min_suspicious_date"] = pd.to_datetime(sar_window["min_suspicious_date"])
+sar_window["max_suspicious_date"] = pd.to_datetime(sar_window["max_suspicious_date"])
+
+window_compare = common_max.merge(sar_window, on="acct_id", how="left")
+
+def classify_window(score_date, min_dt, max_dt):
+    if pd.isna(score_date) or pd.isna(min_dt) or pd.isna(max_dt):
+        return np.nan
+    elif score_date < min_dt:
+        return "before"
+    elif score_date > max_dt:
+        return "after"
+    else:
+        return "inside"
+
+window_compare["iter1_window_position"] = window_compare.apply(
+    lambda x: classify_window(x["iter1_max_score_date"], x["min_suspicious_date"], x["max_suspicious_date"]),
+    axis=1
+)
+
+window_compare["iter2_window_position"] = window_compare.apply(
+    lambda x: classify_window(x["iter2_max_score_date"], x["min_suspicious_date"], x["max_suspicious_date"]),
+    axis=1
+)
+
+window_transition = pd.crosstab(
+    window_compare["iter1_window_position"],
+    window_compare["iter2_window_position"],
+    margins=True
+)
+
+print(window_transition)
+
+
+⸻
+
+15. Segment-level analysis
+
+Especially useful since business accounts were added.
+
+# pull segment from max-score rows if available
+seg1 = df_iter1[["acct_id", "segment"]].drop_duplicates()
+seg2 = df_iter2[["acct_id", "segment"]].drop_duplicates()
+
+segment_compare = (
+    common_max.merge(seg1.rename(columns={"segment": "iter1_segment"}), on="acct_id", how="left")
+              .merge(seg2.rename(columns={"segment": "iter2_segment"}), on="acct_id", how="left")
+)
+
+segment_summary = (
+    segment_compare.groupby("iter2_segment", dropna=False)
+    .agg(
+        n_accounts=("acct_id", "nunique"),
+        avg_iter1_score=("iter1_max_score", "mean"),
+        avg_iter2_score=("iter2_max_score", "mean"),
+        avg_score_diff=("score_diff", "mean"),
+        median_score_diff=("score_diff", "median")
+    )
+    .reset_index()
+)
+
+print(segment_summary)
+
+
+⸻
+
+16. Threshold impact simulation
+
+This is one of the most practical analyses.
+
+# Example: compare top 10% of max scores in each iteration
+thr1 = max1["iter1_max_score"].quantile(0.90)
+thr2 = max2["iter2_max_score"].quantile(0.90)
+
+alert1 = set(max1.loc[max1["iter1_max_score"] >= thr1, "acct_id"])
+alert2 = set(max2.loc[max2["iter2_max_score"] >= thr2, "acct_id"])
+
+threshold_summary = pd.DataFrame({
+    "metric": ["iter1_alerts", "iter2_alerts", "common_alerts", "lost_alerts", "new_alerts"],
+    "value": [
+        len(alert1),
+        len(alert2),
+        len(alert1 & alert2),
+        len(alert1 - alert2),
+        len(alert2 - alert1)
+    ]
+})
+
+print(threshold_summary)
+
+You can repeat this for p95, p99, or a fixed threshold.
+
+⸻
+
+17. Simple executive-ready stability metrics
+
+stability_metrics = {
+    "common_account_rate": len(common_accts) / len(acct1),
+    "band_stability_rate": (~common_max["band_changed"]).mean(),
+    "avg_score_diff": common_max["score_diff"].mean(),
+    "median_score_diff": common_max["score_diff"].median(),
+    "pct_iter2_earlier_max_date": (common_max["date_shift_days"] < 0).mean(),
+    "pct_iter2_later_max_date": (common_max["date_shift_days"] > 0).mean(),
+}
+
+stability_metrics = pd.DataFrame(
+    {"metric": list(stability_metrics.keys()), "value": list(stability_metrics.values())}
+)
+
+print(stability_metrics)
+
+
+⸻
+
+18. Recommended order to run this
+
+Here’s the order I’d actually do it:
+
+Start with
+	1.	Population overlap
+	2.	Max score comparison
+	3.	Score distribution comparison
+	4.	Score drift for common accounts
+	5.	Max score date shift
+
+Then move to
+	6.	Percentile / risk band stability
+	7.	Threshold impact simulation
+	8.	Time series plots for selected accounts
+	9.	Detection window alignment
+
+Finish with
+	10.	Segment-level analysis
+	11.	Deep dives on biggest increases/decreases
+	12.	Summary deck / Confluence write-up
+
+⸻
+
+19. A simple notebook section structure
+
+You can organize your notebook like this:
+
+# 1. Load data
+# 2. Standardize columns / datatypes
+# 3. Population overlap
+# 4. Max-score account comparison
+# 5. Score drift analysis
+# 6. Date shift analysis
+# 7. Rank / percentile stability
+# 8. Threshold simulation
+# 9. Time series account examples
+# 10. Detection window alignment
+# 11. Segment analysis
+# 12. Final summary tables
+
+
+⸻
+
+20. A few questions your analysis can answer
+
+These templates will help you answer:
+	•	How much of the original population came back?
+	•	Did returned accounts generally score higher or lower?
+	•	Did the same accounts stay in the same risk band?
+	•	Did max risk occur earlier or later in iteration 2?
+	•	Did the score distribution tighten or widen?
+	•	Which reviewed accounts disappeared entirely?
+	•	Which accounts changed the most and deserve case review?
+
+⸻
+
+If you want, I can turn this into a single end-to-end pandas notebook script with cleaner helper functions and sample plots you can run all at once.
+
+
+
+
+
+
+
+
+
+
+# ============================================================
+# Iteration 1 vs Iteration 2 Model Comparison Notebook
+# Pandas template for score drift, overlap, timing, and stability
+# ============================================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+pd.set_option("display.max_columns", 200)
+pd.set_option("display.width", 200)
+
+# ------------------------------------------------------------
+# 0. USER INPUTS / CONFIG
+# ------------------------------------------------------------
+
+# Replace these with your actual dataframes
+# df_iter1 = ...
+# df_iter2 = ...
+# sar_window = ...  # optional
+
+ID_COL = "acct_id"
+DATE_COL = "score_date"
+SCORE_COL = "xgb_score"
+
+# Optional columns if present
+SAR_TYPE_COL = "sar_type"          # e.g. Auto SAR / Manual / Not SAR
+SEGMENT_COL = "segment"            # e.g. Consumer / Business
+SAR_WINDOW_MIN_COL = "min_suspicious_date"
+SAR_WINDOW_MAX_COL = "max_suspicious_date"
+
+AUTO_SAR_VALUE = "Auto SAR"
+
+# Thresholds for movement classification
+SCORE_DIFF_MATERIAL = 0.10
+
+# Risk band cutoffs based on percentile rank
+LOW_BAND_CUTOFF = 0.50
+HIGH_BAND_CUTOFF = 0.90
+
+# ------------------------------------------------------------
+# 1. STANDARDIZE INPUTS
+# ------------------------------------------------------------
+
+def standardize_input(df, iteration_name):
+    df = df.copy()
+    df[DATE_COL] = pd.to_datetime(df[DATE_COL])
+    df["iteration"] = iteration_name
+    return df
+
+df_iter1 = standardize_input(df_iter1, "iter1")
+df_iter2 = standardize_input(df_iter2, "iter2")
+
+print("Iter 1 shape:", df_iter1.shape)
+print("Iter 2 shape:", df_iter2.shape)
+
+
+# ------------------------------------------------------------
+# 2. BASIC HELPERS
+# ------------------------------------------------------------
+
+def safe_divide(a, b):
+    return np.where(b != 0, a / b, np.nan)
+
+def classify_score_movement(diff, materiality=SCORE_DIFF_MATERIAL):
+    if pd.isna(diff):
+        return np.nan
+    if diff > materiality:
+        return "increased materially"
+    elif diff < -materiality:
+        return "decreased materially"
+    return "roughly stable"
+
+def risk_band(p):
+    if pd.isna(p):
+        return np.nan
+    if p < LOW_BAND_CUTOFF:
+        return "low"
+    elif p < HIGH_BAND_CUTOFF:
+        return "medium"
+    return "high"
+
+def classify_date_shift(days):
+    if pd.isna(days):
+        return np.nan
+    if days < 0:
+        return "earlier in iter2"
+    elif days > 0:
+        return "later in iter2"
+    return "same date"
+
+def classify_window_position(score_date, min_dt, max_dt):
+    if pd.isna(score_date) or pd.isna(min_dt) or pd.isna(max_dt):
+        return np.nan
+    if score_date < min_dt:
+        return "before"
+    elif score_date > max_dt:
+        return "after"
+    return "inside"
+
+def print_section(title):
+    print("\n" + "=" * 80)
+    print(title)
+    print("=" * 80)
+
+def summarize_numeric(series, name):
+    out = series.describe(percentiles=[0.5, 0.75, 0.9, 0.95, 0.99]).to_frame(name)
+    return out
+
+
+# ------------------------------------------------------------
+# 3. POPULATION OVERLAP
+# ------------------------------------------------------------
+
+def get_population_overlap(df1, df2, id_col=ID_COL):
+    acct1 = set(df1[id_col].dropna().unique())
+    acct2 = set(df2[id_col].dropna().unique())
+
+    common = acct1 & acct2
+    dropped = acct1 - acct2
+    new = acct2 - acct1
+
+    summary = pd.DataFrame({
+        "metric": [
+            "iter1_accounts",
+            "iter2_accounts",
+            "common_accounts",
+            "dropped_from_iter1",
+            "new_in_iter2"
+        ],
+        "value": [
+            len(acct1),
+            len(acct2),
+            len(common),
+            len(dropped),
+            len(new)
+        ]
+    })
+
+    summary["pct_of_iter1"] = np.nan
+    summary["pct_of_iter2"] = np.nan
+
+    if len(acct1) > 0:
+        summary.loc[summary["metric"].isin(["common_accounts", "dropped_from_iter1"]), "pct_of_iter1"] = (
+            summary.loc[summary["metric"].isin(["common_accounts", "dropped_from_iter1"]), "value"] / len(acct1)
+        )
+
+    if len(acct2) > 0:
+        summary.loc[summary["metric"].isin(["common_accounts", "new_in_iter2"]), "pct_of_iter2"] = (
+            summary.loc[summary["metric"].isin(["common_accounts", "new_in_iter2"]), "value"] / len(acct2)
+        )
+
+    return summary, common, dropped, new
+
+pop_summary, common_accts, dropped_accts, new_accts = get_population_overlap(df_iter1, df_iter2)
+
+print_section("3. POPULATION OVERLAP")
+print(pop_summary)
+
+df_common_accts = pd.DataFrame({ID_COL: sorted(common_accts)})
+df_dropped_accts = pd.DataFrame({ID_COL: sorted(dropped_accts)})
+df_new_accts = pd.DataFrame({ID_COL: sorted(new_accts)})
+
+
+# ------------------------------------------------------------
+# 4. MAX SCORE PER ACCOUNT
+# ------------------------------------------------------------
+
+def get_max_score_per_account(df, iteration_prefix, id_col=ID_COL, date_col=DATE_COL, score_col=SCORE_COL):
+    temp = df[[id_col, date_col, score_col]].dropna(subset=[id_col, score_col]).copy()
+    idx = temp.groupby(id_col)[score_col].idxmax()
+    out = temp.loc[idx].copy()
+
+    out = out.rename(columns={
+        date_col: f"{iteration_prefix}_max_score_date",
+        score_col: f"{iteration_prefix}_max_score"
+    })
+
+    return out[[id_col, f"{iteration_prefix}_max_score_date", f"{iteration_prefix}_max_score"]]
+
+max1 = get_max_score_per_account(df_iter1, "iter1")
+max2 = get_max_score_per_account(df_iter2, "iter2")
+
+max_compare = max1.merge(max2, on=ID_COL, how="outer")
+
+max_compare["acct_status"] = np.select(
+    [
+        max_compare["iter1_max_score"].notna() & max_compare["iter2_max_score"].notna(),
+        max_compare["iter1_max_score"].notna() & max_compare["iter2_max_score"].isna(),
+        max_compare["iter1_max_score"].isna() & max_compare["iter2_max_score"].notna()
+    ],
+    ["common", "dropped", "new"],
+    default="unknown"
+)
+
+print_section("4. MAX SCORE PER ACCOUNT")
+print(max_compare["acct_status"].value_counts(dropna=False))
+
+
+# ------------------------------------------------------------
+# 5. SCORE DRIFT FOR COMMON ACCOUNTS
+# ------------------------------------------------------------
+
+common_max = max_compare[max_compare["acct_status"] == "common"].copy()
+
+common_max["score_diff"] = common_max["iter2_max_score"] - common_max["iter1_max_score"]
+common_max["score_diff_abs"] = common_max["score_diff"].abs()
+common_max["score_diff_pct"] = safe_divide(
+    common_max["iter2_max_score"] - common_max["iter1_max_score"],
+    common_max["iter1_max_score"]
+)
+common_max["score_movement"] = common_max["score_diff"].apply(classify_score_movement)
+
+print_section("5. SCORE DRIFT FOR COMMON ACCOUNTS")
+print(summarize_numeric(common_max["score_diff"], "score_diff"))
+print("\nMovement buckets:")
+print(common_max["score_movement"].value_counts(dropna=False))
+
+
+# ------------------------------------------------------------
+# 6. MAX SCORE DATE SHIFT
+# ------------------------------------------------------------
+
+common_max["date_shift_days"] = (
+    common_max["iter2_max_score_date"] - common_max["iter1_max_score_date"]
+).dt.days
+
+common_max["date_shift_bucket"] = common_max["date_shift_days"].apply(classify_date_shift)
+
+print_section("6. MAX SCORE DATE SHIFT")
+print(summarize_numeric(common_max["date_shift_days"], "date_shift_days"))
+print("\nDate shift buckets:")
+print(common_max["date_shift_bucket"].value_counts(dropna=False))
+
+
+# ------------------------------------------------------------
+# 7. PERCENTILE / RISK BAND STABILITY
+# ------------------------------------------------------------
+
+common_max["iter1_pct_rank"] = common_max["iter1_max_score"].rank(pct=True)
+common_max["iter2_pct_rank"] = common_max["iter2_max_score"].rank(pct=True)
+
+common_max["iter1_band"] = common_max["iter1_pct_rank"].apply(risk_band)
+common_max["iter2_band"] = common_max["iter2_pct_rank"].apply(risk_band)
+
+common_max["band_changed"] = common_max["iter1_band"] != common_max["iter2_band"]
+
+band_transition = pd.crosstab(common_max["iter1_band"], common_max["iter2_band"], margins=True)
+
+print_section("7. PERCENTILE / RISK BAND STABILITY")
+print(band_transition)
+print("\nBand changed rate:")
+print(common_max["band_changed"].value_counts(normalize=True, dropna=False))
+
+
+# ------------------------------------------------------------
+# 8. SCORE DISTRIBUTION COMPARISON
+# ------------------------------------------------------------
+
+def percentile_summary(series, name):
+    percentiles = [0.50, 0.75, 0.90, 0.95, 0.99]
+    return pd.DataFrame({
+        "percentile": percentiles,
+        name: [series.quantile(p) for p in percentiles]
+    })
+
+dist1 = percentile_summary(max1["iter1_max_score"], "iter1")
+dist2 = percentile_summary(max2["iter2_max_score"], "iter2")
+dist_summary = dist1.merge(dist2, on="percentile", how="outer")
+
+print_section("8. SCORE DISTRIBUTION COMPARISON")
+print(dist_summary)
+
+plt.figure(figsize=(9, 5))
+plt.hist(max1["iter1_max_score"].dropna(), bins=50, alpha=0.6, label="Iter 1")
+plt.hist(max2["iter2_max_score"].dropna(), bins=50, alpha=0.6, label="Iter 2")
+plt.xlabel("Max Score")
+plt.ylabel("Count")
+plt.title("Max Score Distribution by Iteration")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+# ------------------------------------------------------------
+# 9. TIME SERIES COMPARISON FOR RETURNED ACCOUNTS
+# ------------------------------------------------------------
+
+def build_time_series_compare(df1, df2, id_col=ID_COL, date_col=DATE_COL, score_col=SCORE_COL):
+    ts = (
+        df1[[id_col, date_col, score_col]]
+        .rename(columns={score_col: "iter1_score"})
+        .merge(
+            df2[[id_col, date_col, score_col]].rename(columns={score_col: "iter2_score"}),
+            on=[id_col, date_col],
+            how="outer"
+        )
+    )
+    return ts
+
+ts_compare = build_time_series_compare(df_iter1, df_iter2)
+ts_compare = ts_compare[ts_compare[ID_COL].isin(common_accts)].copy()
+ts_compare["score_diff"] = ts_compare["iter2_score"] - ts_compare["iter1_score"]
+
+print_section("9. TIME SERIES COMPARISON")
+print(ts_compare.head())
+
+
+# ------------------------------------------------------------
+# 10. ACCOUNT-LEVEL TIME SERIES SUMMARY
+# ------------------------------------------------------------
+
+def summarize_ts(group):
+    out = {
+        "n_dates": group[DATE_COL].nunique(),
+        "iter1_mean": group["iter1_score"].mean(),
+        "iter2_mean": group["iter2_score"].mean(),
+        "mean_diff": group["iter2_score"].mean() - group["iter1_score"].mean(),
+        "iter1_std": group["iter1_score"].std(),
+        "iter2_std": group["iter2_score"].std()
+    }
+
+    valid = group[["iter1_score", "iter2_score"]].dropna()
+    out["paired_dates"] = len(valid)
+
+    if len(valid) >= 2:
+        out["corr"] = valid["iter1_score"].corr(valid["iter2_score"])
+    else:
+        out["corr"] = np.nan
+
+    return pd.Series(out)
+
+acct_ts_summary = (
+    ts_compare.groupby(ID_COL)
+    .apply(summarize_ts, include_groups=False)
+    .reset_index()
+)
+
+print_section("10. ACCOUNT-LEVEL TIME SERIES SUMMARY")
+print(acct_ts_summary.head())
+print("\nTime-series correlation summary:")
+print(summarize_numeric(acct_ts_summary["corr"], "corr"))
+
+
+# ------------------------------------------------------------
+# 11. PLOT FUNCTION FOR ACCOUNT TIME SERIES
+# ------------------------------------------------------------
+
+def plot_account_timeseries(acct_id, df_ts=ts_compare, date_col=DATE_COL):
+    temp = df_ts[df_ts[ID_COL] == acct_id].sort_values(date_col).copy()
+
+    if temp.empty:
+        print(f"No time series found for {acct_id}")
+        return
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(temp[date_col], temp["iter1_score"], marker="o", label="Iter 1")
+    plt.plot(temp[date_col], temp["iter2_score"], marker="o", label="Iter 2")
+    plt.xlabel("Score Date")
+    plt.ylabel("Score")
+    plt.title(f"Score Time Series: {acct_id}")
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+# Example usage:
+# plot_account_timeseries(list(common_accts)[0])
+
+
+# ------------------------------------------------------------
+# 12. BIGGEST CHANGES / CASE STUDY CANDIDATES
+# ------------------------------------------------------------
+
+biggest_increases = common_max.sort_values("score_diff", ascending=False).head(20)
+biggest_decreases = common_max.sort_values("score_diff", ascending=True).head(20)
+largest_date_shifts = common_max.assign(
+    abs_date_shift_days=common_max["date_shift_days"].abs()
+).sort_values("abs_date_shift_days", ascending=False).head(20)
+
+print_section("12. CASE STUDY CANDIDATES")
+print("Top increases:")
+print(biggest_increases[[ID_COL, "iter1_max_score", "iter2_max_score", "score_diff"]].head(10))
+
+print("\nTop decreases:")
+print(biggest_decreases[[ID_COL, "iter1_max_score", "iter2_max_score", "score_diff"]].head(10))
+
+print("\nLargest date shifts:")
+print(largest_date_shifts[[ID_COL, "iter1_max_score_date", "iter2_max_score_date", "date_shift_days"]].head(10))
+
+
+# ------------------------------------------------------------
+# 13. AUTO SAR POPULATION COMPARISON
+# ------------------------------------------------------------
+
+if SAR_TYPE_COL in df_iter1.columns and SAR_TYPE_COL in df_iter2.columns:
+    auto1 = set(df_iter1.loc[df_iter1[SAR_TYPE_COL] == AUTO_SAR_VALUE, ID_COL].dropna().unique())
+    auto2 = set(df_iter2.loc[df_iter2[SAR_TYPE_COL] == AUTO_SAR_VALUE, ID_COL].dropna().unique())
+
+    auto_summary = pd.DataFrame({
+        "metric": [
+            "auto_sar_iter1",
+            "auto_sar_iter2",
+            "auto_sar_common",
+            "auto_sar_dropped",
+            "auto_sar_new"
+        ],
+        "value": [
+            len(auto1),
+            len(auto2),
+            len(auto1 & auto2),
+            len(auto1 - auto2),
+            len(auto2 - auto1)
+        ]
+    })
+
+    print_section("13. AUTO SAR POPULATION COMPARISON")
+    print(auto_summary)
+else:
+    print_section("13. AUTO SAR POPULATION COMPARISON")
+    print(f"Skipped because '{SAR_TYPE_COL}' not found in both datasets.")
+
+
+# ------------------------------------------------------------
+# 14. SEGMENT-LEVEL COMPARISON
+# ------------------------------------------------------------
+
+if SEGMENT_COL in df_iter1.columns and SEGMENT_COL in df_iter2.columns:
+    seg1 = df_iter1[[ID_COL, SEGMENT_COL]].drop_duplicates().rename(columns={SEGMENT_COL: "iter1_segment"})
+    seg2 = df_iter2[[ID_COL, SEGMENT_COL]].drop_duplicates().rename(columns={SEGMENT_COL: "iter2_segment"})
+
+    segment_compare = (
+        common_max.merge(seg1, on=ID_COL, how="left")
+                  .merge(seg2, on=ID_COL, how="left")
+    )
+
+    segment_summary = (
+        segment_compare.groupby("iter2_segment", dropna=False)
+        .agg(
+            n_accounts=(ID_COL, "nunique"),
+            avg_iter1_score=("iter1_max_score", "mean"),
+            avg_iter2_score=("iter2_max_score", "mean"),
+            avg_score_diff=("score_diff", "mean"),
+            median_score_diff=("score_diff", "median")
+        )
+        .reset_index()
+    )
+
+    print_section("14. SEGMENT-LEVEL COMPARISON")
+    print(segment_summary)
+else:
+    print_section("14. SEGMENT-LEVEL COMPARISON")
+    print(f"Skipped because '{SEGMENT_COL}' not found in both datasets.")
+
+
+# ------------------------------------------------------------
+# 15. THRESHOLD IMPACT SIMULATION
+# ------------------------------------------------------------
+
+def threshold_simulation(max1_df, max2_df, p=0.90):
+    thr1 = max1_df["iter1_max_score"].quantile(p)
+    thr2 = max2_df["iter2_max_score"].quantile(p)
+
+    alert1 = set(max1_df.loc[max1_df["iter1_max_score"] >= thr1, ID_COL].dropna().unique())
+    alert2 = set(max2_df.loc[max2_df["iter2_max_score"] >= thr2, ID_COL].dropna().unique())
+
+    summary = pd.DataFrame({
+        "metric": [
+            f"iter1_alerts_p{int(p*100)}",
+            f"iter2_alerts_p{int(p*100)}",
+            "common_alerts",
+            "lost_alerts",
+            "new_alerts"
+        ],
+        "value": [
+            len(alert1),
+            len(alert2),
+            len(alert1 & alert2),
+            len(alert1 - alert2),
+            len(alert2 - alert1)
+        ]
+    })
+
+    return summary, thr1, thr2, alert1, alert2
+
+print_section("15. THRESHOLD IMPACT SIMULATION")
+
+for p in [0.90, 0.95, 0.99]:
+    summary, thr1, thr2, _, _ = threshold_simulation(max1, max2, p=p)
+    print(f"\nPercentile threshold: {p:.0%}")
+    print(f"Iter 1 threshold = {thr1:.6f}")
+    print(f"Iter 2 threshold = {thr2:.6f}")
+    print(summary)
+
+
+# ------------------------------------------------------------
+# 16. WINDOW ALIGNMENT (OPTIONAL)
+# ------------------------------------------------------------
+
+if "sar_window" in globals():
+    sar_window = sar_window.copy()
+    sar_window[SAR_WINDOW_MIN_COL] = pd.to_datetime(sar_window[SAR_WINDOW_MIN_COL])
+    sar_window[SAR_WINDOW_MAX_COL] = pd.to_datetime(sar_window[SAR_WINDOW_MAX_COL])
+
+    window_compare = common_max.merge(
+        sar_window[[ID_COL, SAR_WINDOW_MIN_COL, SAR_WINDOW_MAX_COL]],
+        on=ID_COL,
+        how="left"
+    )
+
+    window_compare["iter1_window_position"] = window_compare.apply(
+        lambda x: classify_window_position(
+            x["iter1_max_score_date"],
+            x[SAR_WINDOW_MIN_COL],
+            x[SAR_WINDOW_MAX_COL]
+        ),
+        axis=1
+    )
+
+    window_compare["iter2_window_position"] = window_compare.apply(
+        lambda x: classify_window_position(
+            x["iter2_max_score_date"],
+            x[SAR_WINDOW_MIN_COL],
+            x[SAR_WINDOW_MAX_COL]
+        ),
+        axis=1
+    )
+
+    window_transition = pd.crosstab(
+        window_compare["iter1_window_position"],
+        window_compare["iter2_window_position"],
+        margins=True
+    )
+
+    print_section("16. WINDOW ALIGNMENT")
+    print(window_transition)
+else:
+    print_section("16. WINDOW ALIGNMENT")
+    print("Skipped because sar_window dataframe was not provided.")
+
+
+# ------------------------------------------------------------
+# 17. EXECUTIVE SUMMARY METRICS
+# ------------------------------------------------------------
+
+stability_metrics = {
+    "iter1_account_count": df_iter1[ID_COL].nunique(),
+    "iter2_account_count": df_iter2[ID_COL].nunique(),
+    "common_account_count": len(common_accts),
+    "common_account_rate_vs_iter1": len(common_accts) / max(df_iter1[ID_COL].nunique(), 1),
+    "band_stability_rate": (~common_max["band_changed"]).mean() if len(common_max) > 0 else np.nan,
+    "avg_score_diff": common_max["score_diff"].mean() if len(common_max) > 0 else np.nan,
+    "median_score_diff": common_max["score_diff"].median() if len(common_max) > 0 else np.nan,
+    "pct_iter2_earlier_max_date": (common_max["date_shift_days"] < 0).mean() if len(common_max) > 0 else np.nan,
+    "pct_iter2_later_max_date": (common_max["date_shift_days"] > 0).mean() if len(common_max) > 0 else np.nan,
+    "avg_ts_corr": acct_ts_summary["corr"].mean() if len(acct_ts_summary) > 0 else np.nan
+}
+
+stability_metrics_df = pd.DataFrame({
+    "metric": list(stability_metrics.keys()),
+    "value": list(stability_metrics.values())
+})
+
+print_section("17. EXECUTIVE SUMMARY METRICS")
+print(stability_metrics_df)
+
+
+# ------------------------------------------------------------
+# 18. OPTIONAL EXPORTS
+# ------------------------------------------------------------
+
+# Uncomment if you want to export outputs
+# common_max.to_excel("common_max_comparison.xlsx", index=False)
+# acct_ts_summary.to_excel("account_time_series_summary.xlsx", index=False)
+# biggest_increases.to_excel("biggest_increases.xlsx", index=False)
+# biggest_decreases.to_excel("biggest_decreases.xlsx", index=False)
+# largest_date_shifts.to_excel("largest_date_shifts.xlsx", index=False)
+# stability_metrics_df.to_excel("stability_metrics.xlsx", index=False)
+
+
+# ------------------------------------------------------------
+# 19. SUGGESTED NEXT STEPS
+# ------------------------------------------------------------
+
+print_section("19. WHAT TO REVIEW FIRST")
+print(
+    """
+1. Population overlap:
+   - How many accounts returned?
+   - Which previously reviewed accounts disappeared?
+
+2. Score drift:
+   - Are returned accounts mostly scoring higher, lower, or stable?
+
+3. Timing:
+   - Is Iteration 2 identifying max risk earlier or later?
+
+4. Stability:
+   - Are accounts staying in the same risk band?
+
+5. Threshold impact:
+   - Would the same accounts alert at the 90th / 95th / 99th percentile?
+
+6. Deep dives:
+   - Review biggest increases, biggest decreases, and largest timing shifts.
+"""
+)
