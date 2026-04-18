@@ -76,9 +76,9 @@ Sub GenerateKnownSarTemplates()
     colSusEnd = GetHeaderColumn(wsOutput, "Suspicious window END DATE")
     colWinStart = GetHeaderColumn(wsOutput, "win_start")
     colWinEnd = GetHeaderColumn(wsOutput, "win_end")
-    colMaxDateAcct = GetHeaderColumn(wsOutput, "max_date_snapshop_acct")
+    colMaxDateAcct = GetHeaderColumn(wsOutput, "max_date_snapshot_acct")
     colMaxScoreAcct = GetHeaderColumn(wsOutput, "max_model_score_acct")
-    colMaxDateCase = GetHeaderColumn(wsOutput, "max_date_snapshop_case")
+    colMaxDateCase = GetHeaderColumn(wsOutput, "max_date_snapshot_case")
     colMaxScoreCase = GetHeaderColumn(wsOutput, "max_model_score_case")
     
     colProcessedFlag = GetHeaderColumn(wsOutput, "Processed_Flag")
@@ -126,9 +126,9 @@ Sub GenerateKnownSarTemplates()
         WriteReviewValue wsReview, "Suspicious window END DATE", susEndVal
         WriteReviewValue wsReview, "win_start", winStartVal
         WriteReviewValue wsReview, "win_end", winEndVal
-        WriteReviewValue wsReview, "max_date_snapshop_acct", maxDateAcctVal
+        WriteReviewValue wsReview, "max_date_snapshot_acct", maxDateAcctVal
         WriteReviewValue wsReview, "max_model_score_acct", maxScoreAcctVal
-        WriteReviewValue wsReview, "max_date_snapshop_case", maxDateCaseVal
+        WriteReviewValue wsReview, "max_date_snapshot_case", maxDateCaseVal
         WriteReviewValue wsReview, "max_model_score_case", maxScoreCaseVal
         
         ' Refresh CaseFeatureTop50 by setting ref id in D10
