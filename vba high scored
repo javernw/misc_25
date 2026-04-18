@@ -1,0 +1,260 @@
+Option Explicit
+
+Sub GenerateHighScoreTemplates()
+
+    Dim templatePath As Variant
+    Dim masterPath As Variant
+    Dim outputFolder As String
+    
+    Dim wbMaster As Workbook
+    Dim wbTemplate As Workbook
+    Dim wsOutput As Worksheet
+    Dim wsFeature As Worksheet
+    Dim wsSummary As Worksheet
+    Dim wsReason As Worksheet
+    
+    Dim lastRow As Long, r As Long
+    Dim filesCreated As Long: filesCreated = 0
+    
+    ' Column variables
+    Dim colRef As Long, colPTY As Long, colPartyKey As Long
+    Dim colUID As Long, colFileName As Long, colScoreDate As Long
+    Dim colProcessedFlag As Long, colProcessedDate As Long
+    
+    ' Values
+    Dim refVal As String, uidVal As String, fileNameVal As String
+    
+    Dim savePath As String
+    Dim featureLastRow As Long
+    Dim copyRange As Range
+    
+    On Error GoTo ErrHandler
+    
+    ' ========================
+    ' USER INPUT
+    ' ========================
+    templatePath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Template")
+    If templatePath = False Then Exit Sub
+    
+    masterPath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Master Input")
+    If masterPath = False Then Exit Sub
+    
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Select Output Folder"
+        If .Show <> -1 Then Exit Sub
+        outputFolder = .SelectedItems(1)
+    End With
+    
+    Application.ScreenUpdating = False
+    
+    ' ========================
+    ' OPEN MASTER
+    ' ========================
+    Set wbMaster = Workbooks.Open(masterPath)
+    Set wsOutput = wbMaster.Worksheets("Output")
+    Set wsFeature = wbMaster.Worksheets("CaseFeatureTop50")
+    
+    ' ========================
+    ' FIND COLUMNS
+    ' ========================
+    colRef = GetHeaderColumn(wsOutput, "Reference")
+    colPTY = GetHeaderColumn(wsOutput, "PTY_ID")
+    colPartyKey = GetHeaderColumn(wsOutput, "Party_key")
+    colUID = GetHeaderColumn(wsOutput, "Unique Identifier")
+    colFileName = GetHeaderColumn(wsOutput, "FileLookupID")
+    colScoreDate = GetHeaderColumn(wsOutput, "Score Date")
+    
+    colProcessedFlag = GetHeaderColumn(wsOutput, "Processed_Flag")
+    colProcessedDate = GetHeaderColumn(wsOutput, "Processed_Date")
+    
+    lastRow = wsOutput.Cells(wsOutput.Rows.Count, colPartyKey).End(xlUp).Row
+    
+    ' ========================
+    ' LOOP THROUGH ROWS
+    ' ========================
+    For r = 2 To lastRow
+        
+        If wsOutput.Cells(r, colProcessedFlag).Value <> "" Then GoTo NextRow
+        
+        refVal = wsOutput.Cells(r, colRef).Value
+        uidVal = wsOutput.Cells(r, colUID).Value
+        fileNameVal = wsOutput.Cells(r, colFileName).Value
+        
+        If Trim(fileNameVal) = "" Then GoTo NextRow
+        
+        ' ========================
+        ' BUILD FILE PATH
+        ' ========================
+        savePath = outputFolder & "\" & fileNameVal
+        
+        ' OPTIONAL OVERWRITE (disabled)
+        'If Dir(savePath) <> "" Then Kill savePath
+        
+        savePath = GetUniqueFilePath(savePath)
+        
+        ' ========================
+        ' COPY TEMPLATE → OPEN COPY
+        ' ========================
+        FileCopy templatePath, savePath
+        Set wbTemplate = Workbooks.Open(savePath)
+        
+        Set wsSummary = wbTemplate.Worksheets("Summary")
+        Set wsReason = wbTemplate.Worksheets("ReasonReview")
+        
+        ' ========================
+        ' POPULATE SUMMARY (Row 4)
+        ' ========================
+        FillSummaryRow wsSummary, wsOutput, r
+        
+        ' ========================
+        ' POPULATE B1 CELLS
+        ' ========================
+        wbTemplate.Worksheets("Phase 1").Range("B1").Value = uidVal
+        wbTemplate.Worksheets("Phase 2").Range("B1").Value = uidVal
+        wbTemplate.Worksheets("Phase 3").Range("B1").Value = uidVal
+        wbTemplate.Worksheets("ReasonReview").Range("B1").Value = uidVal
+        
+        ' ========================
+        ' FEATURE LOOKUP
+        ' ========================
+        wsFeature.Range("D10").Value = refVal
+        DoEvents
+        Application.Calculate
+        
+        wsReason.Range("C:H").ClearContents
+        
+        featureLastRow = GetLastUsedRowAcrossColumns(wsFeature, 3, 8)
+        
+        If featureLastRow >= 2 Then
+            Set copyRange = wsFeature.Range("C2:H" & featureLastRow)
+            wsReason.Range("C1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
+            
+            FormatSarTextInColumnG wsReason, 1, copyRange.Rows.Count
+        End If
+        
+        ' ========================
+        ' FINAL VIEW → FRONT SHEET
+        ' ========================
+        With wbTemplate.Worksheets("Front")
+            .Activate
+            .Range("A1").Select
+        End With
+        
+        wbTemplate.Save
+        wbTemplate.Close False
+        
+        ' ========================
+        ' MARK PROCESSED
+        ' ========================
+        wsOutput.Cells(r, colProcessedFlag).Value = "Yes"
+        wsOutput.Cells(r, colProcessedDate).Value = Now
+        
+        filesCreated = filesCreated + 1
+        
+NextRow:
+    Next r
+    
+    wbMaster.Save
+    
+    If filesCreated = 0 Then
+        MsgBox "No new files were generated.", vbExclamation
+    Else
+        MsgBox filesCreated & " file(s) created.", vbInformation
+    End If
+    
+    Application.ScreenUpdating = True
+    
+    Exit Sub
+    
+ErrHandler:
+    MsgBox "Error: " & Err.Description
+    Application.ScreenUpdating = True
+
+End Sub
+
+Private Function GetHeaderColumn(ws As Worksheet, headerName As String) As Long
+    Dim c As Long
+    For c = 1 To ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+        If Trim(ws.Cells(1, c).Value) = headerName Then
+            GetHeaderColumn = c
+            Exit Function
+        End If
+    Next c
+    Err.Raise 1000, , "Header not found: " & headerName
+End Function
+
+Private Sub FillSummaryRow(wsSummary As Worksheet, wsOutput As Worksheet, rowNum As Long)
+
+    Dim c As Long, header As String, srcCol As Long
+    
+    For c = 1 To wsSummary.Cells(3, wsSummary.Columns.Count).End(xlToLeft).Column
+        
+        header = wsSummary.Cells(3, c).Value
+        
+        If header <> "" Then
+            On Error Resume Next
+            srcCol = GetHeaderColumn(wsOutput, header)
+            On Error GoTo 0
+            
+            If srcCol > 0 Then
+                wsSummary.Cells(4, c).Value = wsOutput.Cells(rowNum, srcCol).Value
+            End If
+        End If
+        
+    Next c
+
+End Sub
+
+Private Function GetLastUsedRowAcrossColumns(ws As Worksheet, firstCol As Long, lastCol As Long) As Long
+    Dim c As Long, maxRow As Long, tempRow As Long
+    
+    For c = firstCol To lastCol
+        tempRow = ws.Cells(ws.Rows.Count, c).End(xlUp).Row
+        If tempRow > maxRow Then maxRow = tempRow
+    Next c
+    
+    GetLastUsedRowAcrossColumns = maxRow
+End Function
+
+Private Function GetUniqueFilePath(fullPath As String) As String
+    
+    If Dir(fullPath) = "" Then
+        GetUniqueFilePath = fullPath
+        Exit Function
+    End If
+    
+    Dim base As String, ext As String, i As Long
+    
+    base = Left(fullPath, InStrRev(fullPath, ".") - 1)
+    ext = Mid(fullPath, InStrRev(fullPath, "."))
+    
+    i = 1
+    Do
+        GetUniqueFilePath = base & " (" & i & ")" & ext
+        i = i + 1
+    Loop While Dir(GetUniqueFilePath) <> ""
+    
+End Function
+
+Private Sub FormatSarTextInColumnG(ws As Worksheet, startRow As Long, rowCount As Long)
+
+    Dim r As Long, txt As String, sepPos As Long
+    
+    For r = startRow To startRow + rowCount - 1
+        
+        txt = ws.Cells(r, "G").Value
+        
+        If txt <> "" Then
+            
+            sepPos = InStr(txt, "|")
+            
+            If sepPos > 0 Then
+                ws.Cells(r, "G").Characters(1, sepPos - 1).Font.Color = RGB(0, 128, 0)
+                ws.Cells(r, "G").Characters(sepPos + 1, Len(txt) - sepPos).Font.Color = RGB(255, 0, 0)
+            End If
+            
+        End If
+        
+    Next r
+
+End Sub
