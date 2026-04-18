@@ -1,0 +1,285 @@
+Option Explicit
+
+Sub GenerateKnownSarTemplates()
+
+    Dim templatePath As Variant
+    Dim masterPath As Variant
+    Dim outputFolder As String
+    
+    Dim wbMaster As Workbook
+    Dim wbTemplate As Workbook
+    Dim wsOutput As Worksheet
+    Dim wsFeature As Worksheet
+    Dim wsReview As Worksheet
+    Dim wsReason As Worksheet
+    
+    Dim lastRow As Long
+    Dim r As Long
+    
+    Dim colRef As Long, colCaseID As Long, colPartyKey As Long
+    Dim colSusStart As Long, colSusEnd As Long
+    Dim colWinStart As Long, colWinEnd As Long
+    Dim colMaxDateAcct As Long, colMaxScoreAcct As Long
+    Dim colMaxDateCase As Long, colMaxScoreCase As Long
+    Dim colProcessedFlag As Long, colProcessedDate As Long, colOutputFileName As Long
+    
+    Dim refVal As String, caseIDVal As String, partyKeyVal As String
+    Dim susStartVal As Variant, susEndVal As Variant
+    Dim winStartVal As Variant, winEndVal As Variant
+    Dim maxDateAcctVal As Variant, maxScoreAcctVal As Variant
+    Dim maxDateCaseVal As Variant, maxScoreCaseVal As Variant
+    
+    Dim saveName As String
+    Dim savePath As String
+    
+    Dim featureLastRow As Long
+    Dim copyRange As Range
+    
+    Dim calcState As XlCalculation
+    Dim screenState As Boolean
+    Dim alertsState As Boolean
+    
+    On Error GoTo ErrHandler
+    
+    ' Prompt user for files/folder
+    templatePath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Template Workbook")
+    If templatePath = False Then Exit Sub
+    
+    masterPath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Master Input Workbook")
+    If masterPath = False Then Exit Sub
+    
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Select Output Folder"
+        If .Show <> -1 Then Exit Sub
+        outputFolder = .SelectedItems(1)
+    End With
+    
+    ' Save application state
+    screenState = Application.ScreenUpdating
+    alertsState = Application.DisplayAlerts
+    calcState = Application.Calculation
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.Calculation = xlCalculationAutomatic
+    
+    ' Open master workbook
+    Set wbMaster = Workbooks.Open(CStr(masterPath))
+    Set wsOutput = wbMaster.Worksheets("Output")
+    Set wsFeature = wbMaster.Worksheets("CaseFeatureTop50")
+    
+    ' Find required columns in Output sheet
+    colRef = GetHeaderColumn(wsOutput, "Ref")
+    colCaseID = GetHeaderColumn(wsOutput, "Case_ID")
+    colPartyKey = GetHeaderColumn(wsOutput, "PARTY_KEY")
+    colSusStart = GetHeaderColumn(wsOutput, "Suspicious window START DATE")
+    colSusEnd = GetHeaderColumn(wsOutput, "Suspicious window END DATE")
+    colWinStart = GetHeaderColumn(wsOutput, "win_start")
+    colWinEnd = GetHeaderColumn(wsOutput, "win_end")
+    colMaxDateAcct = GetHeaderColumn(wsOutput, "max_date_snapshop_acct")
+    colMaxScoreAcct = GetHeaderColumn(wsOutput, "max_model_score_acct")
+    colMaxDateCase = GetHeaderColumn(wsOutput, "max_date_snapshop_case")
+    colMaxScoreCase = GetHeaderColumn(wsOutput, "max_model_score_case")
+    
+    colProcessedFlag = GetHeaderColumn(wsOutput, "Processed_Flag")
+    colProcessedDate = GetHeaderColumn(wsOutput, "Processed_Date")
+    colOutputFileName = GetHeaderColumn(wsOutput, "Output_File_Name")
+    
+    lastRow = wsOutput.Cells(wsOutput.Rows.Count, colPartyKey).End(xlUp).Row
+    
+    For r = 2 To lastRow
+        
+        ' Skip already processed rows
+        If Trim(CStr(wsOutput.Cells(r, colProcessedFlag).Value)) <> "" Then
+            GoTo NextRow
+        End If
+        
+        ' Skip blank party keys
+        If Trim(CStr(wsOutput.Cells(r, colPartyKey).Value)) = "" Then
+            GoTo NextRow
+        End If
+        
+        ' Read values
+        refVal = Trim(CStr(wsOutput.Cells(r, colRef).Value))
+        caseIDVal = Trim(CStr(wsOutput.Cells(r, colCaseID).Value))
+        partyKeyVal = Trim(CStr(wsOutput.Cells(r, colPartyKey).Value))
+        
+        susStartVal = wsOutput.Cells(r, colSusStart).Value
+        susEndVal = wsOutput.Cells(r, colSusEnd).Value
+        winStartVal = wsOutput.Cells(r, colWinStart).Value
+        winEndVal = wsOutput.Cells(r, colWinEnd).Value
+        maxDateAcctVal = wsOutput.Cells(r, colMaxDateAcct).Value
+        maxScoreAcctVal = wsOutput.Cells(r, colMaxScoreAcct).Value
+        maxDateCaseVal = wsOutput.Cells(r, colMaxDateCase).Value
+        maxScoreCaseVal = wsOutput.Cells(r, colMaxScoreCase).Value
+        
+        ' Open fresh template
+        Set wbTemplate = Workbooks.Open(CStr(templatePath))
+        Set wsReview = wbTemplate.Worksheets("Review")
+        Set wsReason = wbTemplate.Worksheets("Reasonreview")
+        
+        ' Fill Review sheet by matching labels in col C and writing to col D
+        WriteReviewValue wsReview, "Ref", refVal
+        WriteReviewValue wsReview, "Case_ID", caseIDVal
+        WriteReviewValue wsReview, "PARTY_KEY", partyKeyVal
+        WriteReviewValue wsReview, "Suspicious window START DATE", susStartVal
+        WriteReviewValue wsReview, "Suspicious window END DATE", susEndVal
+        WriteReviewValue wsReview, "win_start", winStartVal
+        WriteReviewValue wsReview, "win_end", winEndVal
+        WriteReviewValue wsReview, "max_date_snapshop_acct", maxDateAcctVal
+        WriteReviewValue wsReview, "max_model_score_acct", maxScoreAcctVal
+        WriteReviewValue wsReview, "max_date_snapshop_case", maxDateCaseVal
+        WriteReviewValue wsReview, "max_model_score_case", maxScoreCaseVal
+        
+        ' Refresh CaseFeatureTop50 by setting ref id in D10
+        wsFeature.Range("D10").Value = refVal
+        DoEvents
+        Application.Calculate
+        
+        ' Clear old content in Reasonreview C:H
+        wsReason.Range("C:H").ClearContents
+        
+        ' Copy data only from master CaseFeatureTop50 C:H
+        featureLastRow = GetLastUsedRowAcrossColumns(wsFeature, 3, 8) ' C:H
+        
+        If featureLastRow >= 1 Then
+            Set copyRange = wsFeature.Range("C1:H" & featureLastRow)
+            wsReason.Range("C1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
+        End If
+        
+        ' Save populated file
+        saveName = "known-SAR investigation workbook - " & CleanFileName(partyKeyVal) & ".xlsx"
+        savePath = outputFolder & "\" & saveName
+        
+        ' Handle duplicate filename if it already exists
+        savePath = GetUniqueFilePath(savePath)
+        saveName = Mid(savePath, InStrRev(savePath, "\") + 1)
+        
+        wbTemplate.SaveAs Filename:=savePath, FileFormat:=xlOpenXMLWorkbook
+        wbTemplate.Close SaveChanges:=False
+        
+        ' Mark row as processed
+        wsOutput.Cells(r, colProcessedFlag).Value = "Yes"
+        wsOutput.Cells(r, colProcessedDate).Value = Now
+        wsOutput.Cells(r, colOutputFileName).Value = saveName
+        
+NextRow:
+        Set wbTemplate = Nothing
+        Set wsReview = Nothing
+        Set wsReason = Nothing
+        
+    Next r
+    
+    wbMaster.Save
+    
+    MsgBox "Template generation complete.", vbInformation
+    
+CleanExit:
+    On Error Resume Next
+    
+    If Not wbMaster Is Nothing Then wbMaster.Save
+    If Not wbMaster Is Nothing Then wbMaster.Close SaveChanges:=True
+    
+    Application.ScreenUpdating = screenState
+    Application.DisplayAlerts = alertsState
+    Application.Calculation = calcState
+    
+    Exit Sub
+
+ErrHandler:
+    MsgBox "Error: " & Err.Description, vbExclamation
+    On Error Resume Next
+    If Not wbTemplate Is Nothing Then wbTemplate.Close SaveChanges:=False
+    Resume CleanExit
+
+End Sub
+
+
+Private Function GetHeaderColumn(ws As Worksheet, headerName As String) As Long
+    Dim lastCol As Long
+    Dim c As Long
+    
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    For c = 1 To lastCol
+        If Trim(CStr(ws.Cells(1, c).Value)) = headerName Then
+            GetHeaderColumn = c
+            Exit Function
+        End If
+    Next c
+    
+    Err.Raise vbObjectError + 1000, , "Header not found: " & headerName
+End Function
+
+
+Private Sub WriteReviewValue(ws As Worksheet, labelText As String, writeValue As Variant)
+    Dim foundCell As Range
+    
+    Set foundCell = ws.Columns("C").Find(What:=labelText, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    
+    If foundCell Is Nothing Then
+        Err.Raise vbObjectError + 1001, , "Label not found on Review sheet: " & labelText
+    Else
+        ws.Cells(foundCell.Row, "D").Value = writeValue
+    End If
+End Sub
+
+
+Private Function GetLastUsedRowAcrossColumns(ws As Worksheet, firstCol As Long, lastCol As Long) As Long
+    Dim c As Long
+    Dim maxRow As Long
+    Dim thisRow As Long
+    
+    maxRow = 1
+    
+    For c = firstCol To lastCol
+        thisRow = ws.Cells(ws.Rows.Count, c).End(xlUp).Row
+        If thisRow > maxRow Then maxRow = thisRow
+    Next c
+    
+    GetLastUsedRowAcrossColumns = maxRow
+End Function
+
+
+Private Function CleanFileName(fileNameText As String) As String
+    Dim badChars As Variant
+    Dim i As Long
+    
+    badChars = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
+    CleanFileName = fileNameText
+    
+    For i = LBound(badChars) To UBound(badChars)
+        CleanFileName = Replace(CleanFileName, badChars(i), "_")
+    Next i
+End Function
+
+
+Private Function GetUniqueFilePath(fullPath As String) As String
+    Dim folderPath As String
+    Dim baseName As String
+    Dim extension As String
+    Dim counter As Long
+    Dim testPath As String
+    Dim posDot As Long
+    Dim posSlash As Long
+    
+    If Dir(fullPath) = "" Then
+        GetUniqueFilePath = fullPath
+        Exit Function
+    End If
+    
+    posSlash = InStrRev(fullPath, "\")
+    posDot = InStrRev(fullPath, ".")
+    
+    folderPath = Left(fullPath, posSlash)
+    baseName = Mid(fullPath, posSlash + 1, posDot - posSlash - 1)
+    extension = Mid(fullPath, posDot)
+    
+    counter = 1
+    Do
+        testPath = folderPath & baseName & " (" & counter & ")" & extension
+        counter = counter + 1
+    Loop While Dir(testPath) <> ""
+    
+    GetUniqueFilePath = testPath
+End Function
