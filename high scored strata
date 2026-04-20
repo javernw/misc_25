@@ -1,0 +1,124 @@
+---
+
+# 🔧 Step 1 — Define eligible population (percentile-based)
+
+```python
+def get_high_score_population(df, score_col="global_max_score", pct_cutoff=99.0):
+    cutoff = np.nanpercentile(df[score_col], pct_cutoff)
+    return df[df[score_col] >= cutoff].copy(), cutoff
+
+def create_percentile_buckets(df, score_col="global_max_score"):
+    percentiles = df[score_col].rank(pct=True) * 100
+
+    bins = [99.0, 99.5, 99.8, 99.9, 99.97, 100.0]
+    labels = ["P99-99.5", "P99.5-99.8", "P99.8-99.9", "P99.9-99.97", "P99.97-100"]
+
+    df = df.copy()
+    df["score_pct"] = percentiles
+    df["bucket"] = pd.cut(percentiles, bins=bins, labels=labels, include_lowest=True)
+
+    return df
+
+high_df = create_percentile_buckets(high_df)
+
+def allocate_targets(df, total_target, min_per_type=2):
+    summary = (
+        df.groupby(["bucket", "acct_type"])
+        .size()
+        .reset_index(name="count")
+    )
+
+    bucket_totals = summary.groupby("bucket")["count"].sum()
+
+    allocations = []
+
+    for bucket in bucket_totals.index:
+        bucket_df = summary[summary["bucket"] == bucket]
+        total_bucket = bucket_totals[bucket]
+
+        for _, row in bucket_df.iterrows():
+            prop = row["count"] / total_bucket
+            target = int(round(prop * total_target / len(bucket_totals)))
+
+            # enforce minimum floor
+            target = max(target, min_per_type)
+
+            allocations.append({
+                "bucket": bucket,
+                "acct_type": row["acct_type"],
+                "target": target
+            })
+
+    return pd.DataFrame(allocations)
+
+
+def stratified_account_sampling(
+    df,
+    allocations,
+    max_accounts_per_customer=1,
+    seed=42
+):
+    rng = np.random.default_rng(seed)
+
+    sampled = []
+
+    for _, row in allocations.iterrows():
+        bucket = row["bucket"]
+        acct_type = row["acct_type"]
+        target = row["target"]
+
+        subset = df[
+            (df["bucket"] == bucket) &
+            (df["acct_type"] == acct_type)
+        ].copy()
+
+        if subset.empty:
+            continue
+
+        # shuffle
+        subset = subset.sample(frac=1, random_state=seed)
+
+        # enforce PTY_ID cap
+        subset["pty_count"] = subset.groupby("PTY_ID").cumcount()
+
+        subset = subset[subset["pty_count"] < max_accounts_per_customer]
+
+        sampled_subset = subset.head(target)
+
+        sampled.append(sampled_subset)
+
+    sampled_df = pd.concat(sampled, ignore_index=True) if sampled else pd.DataFrame()
+
+    return sampled_df
+
+def build_summary(sampled_df):
+    if sampled_df.empty:
+        return pd.DataFrame()
+
+    return (
+        sampled_df
+        .groupby(["bucket", "acct_type"], as_index=False)
+        .agg(
+            sampled_accounts=("PARTY_KEY", "count"),
+            unique_customers=("PTY_ID", "nunique")
+        )
+    )
+
+# 1. High-score population
+high_df, cutoff = get_high_score_population(pd_monthly_non_alert, pct_cutoff=99.0)
+
+# 2. Buckets
+high_df = create_percentile_buckets(high_df)
+
+# 3. Allocation
+allocations = allocate_targets(high_df, total_target=100, min_per_type=2)
+
+# 4. Sampling
+sampled_df = stratified_account_sampling(
+    high_df,
+    allocations,
+    max_accounts_per_customer=1
+)
+
+# 5. Summary
+summary_df = build_summary(sampled_df)
