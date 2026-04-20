@@ -7,6 +7,19 @@ def get_high_score_population(df, score_col="global_max_score", pct_cutoff=99.0)
     cutoff = np.nanpercentile(df[score_col], pct_cutoff)
     return df[df[score_col] >= cutoff].copy(), cutoff
 
+def exclude_previously_reviewed(df, prev_selected_df):
+    if prev_selected_df is None or prev_selected_df.empty:
+        return df.copy()
+
+    merged = df.merge(
+        prev_selected_df[["PTY_ID", "PARTY_KEY"]],
+        on=["PTY_ID", "PARTY_KEY"],
+        how="left",
+        indicator=True
+    )
+
+    return merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+
 def create_percentile_buckets(df, score_col="global_max_score"):
     percentiles = df[score_col].rank(pct=True) * 100
 
@@ -19,7 +32,6 @@ def create_percentile_buckets(df, score_col="global_max_score"):
 
     return df
 
-high_df = create_percentile_buckets(high_df)
 
 def allocate_targets(df, total_target, min_per_type=2):
     summary = (
@@ -106,6 +118,8 @@ def build_summary(sampled_df):
 
 # 1. High-score population
 high_df, cutoff = get_high_score_population(pd_monthly_non_alert, pct_cutoff=99.0)
+
+high_df = exclude_previously_reviewed(high_df, prev_selected_df)
 
 # 2. Buckets
 high_df = create_percentile_buckets(high_df)
