@@ -136,3 +136,371 @@ sampled_df = stratified_account_sampling(
 
 # 5. Summary
 summary_df = build_summary(sampled_df)
+
+
+
+import numpy as np
+import pandas as pd
+
+
+def filter_current_month_or_later(df, score_date_col="score_date", current_period="2026-04"):
+    df = df.copy()
+    df[score_date_col] = pd.to_datetime(df[score_date_col])
+
+    period_start = pd.Period(current_period, freq="M").start_time
+
+    return df[df[score_date_col] >= period_start].copy()
+
+
+def get_high_score_population(df, cutoff_by_pct, pct_cutoff=99.0, score_col="global_max_score"):
+    cutoff = cutoff_by_pct[pct_cutoff]
+    high_df = df[df[score_col] >= cutoff].copy()
+    return high_df, cutoff
+
+
+def create_buckets_from_percentile_df(df, cutoff_by_pct, score_col="global_max_score"):
+    p99   = cutoff_by_pct[99.0]
+    p995  = cutoff_by_pct[99.5]
+    p998  = cutoff_by_pct[99.8]
+    p999  = cutoff_by_pct[99.9]
+    p9997 = cutoff_by_pct[99.97]
+
+    df = df.copy()
+
+    df["bucket"] = pd.cut(
+        df[score_col],
+        bins=[p99, p995, p998, p999, p9997, np.inf],
+        labels=["P99-99.5", "P99.5-99.8", "P99.8-99.9", "P99.9-99.97", "P99.97-100"],
+        include_lowest=True
+    )
+
+    return df
+
+
+def exclude_previously_reviewed(df, prev_selected_df):
+    if prev_selected_df is None or prev_selected_df.empty:
+        return df.copy()
+
+    reviewed_keys = prev_selected_df[["PTY_ID", "PARTY_KEY"]].drop_duplicates()
+
+    merged = df.merge(
+        reviewed_keys,
+        on=["PTY_ID", "PARTY_KEY"],
+        how="left",
+        indicator=True
+    )
+
+    return merged[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+
+
+def allocate_targets(df, total_target, min_per_type=2):
+    summary = (
+        df.dropna(subset=["bucket", "acct_type"])
+          .groupby(["bucket", "acct_type"], observed=True)
+          .size()
+          .reset_index(name="available_accounts")
+    )
+
+    if summary.empty:
+        raise ValueError("No rows available after grouping by bucket and acct_type.")
+
+    bucket_totals = (
+        summary.groupby("bucket", observed=True)["available_accounts"]
+        .sum()
+        .reset_index(name="bucket_total")
+    )
+
+    summary = summary.merge(bucket_totals, on="bucket", how="left")
+
+    n_buckets = summary["bucket"].nunique()
+    if n_buckets == 0:
+        raise ValueError("No populated buckets available.")
+
+    per_bucket_target = total_target / n_buckets
+
+    allocations = []
+    for _, row in summary.iterrows():
+        prop = row["available_accounts"] / row["bucket_total"]
+        target = int(round(prop * per_bucket_target))
+        target = max(target, min_per_type)
+        target = min(target, row["available_accounts"])
+
+        allocations.append({
+            "bucket": row["bucket"],
+            "acct_type": row["acct_type"],
+            "target": target,
+            "available_accounts": row["available_accounts"]
+        })
+
+    return pd.DataFrame(allocations)
+
+
+def prepare_ranked_candidates(df, score_col="global_max_score", score_date_col="score_date"):
+    df = df.copy()
+    df[score_date_col] = pd.to_datetime(df[score_date_col])
+
+    # Global ranking rule within each customer:
+    # 1) highest score
+    # 2) latest score date
+    # 3) smallest PARTY_KEY as stable deterministic tie-breaker
+    df = df.sort_values(
+        ["PTY_ID", score_col, score_date_col, "PARTY_KEY"],
+        ascending=[True, False, False, True]
+    ).copy()
+
+    df["global_pty_rank"] = df.groupby("PTY_ID").cumcount() + 1
+    return df
+
+
+def stratified_account_sampling_global_cap(
+    df,
+    allocations,
+    prev_selected_df=None,
+    max_accounts_per_customer=1,
+    seed=42,
+    score_col="global_max_score",
+    score_date_col="score_date"
+):
+    df = df.copy()
+
+    # 1) remove previously reviewed accounts
+    df = exclude_previously_reviewed(df, prev_selected_df)
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # 2) create a GLOBAL per-customer ranking so top-N is fixed across the entire sample
+    df = prepare_ranked_candidates(df, score_col=score_col, score_date_col=score_date_col)
+
+    # 3) pre-limit each customer to their global top-N accounts
+    df = df[df["global_pty_rank"] <= max_accounts_per_customer].copy()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    sampled_parts = []
+    already_selected_pairs = set()
+    selected_count_by_pty = {}
+
+    # Shuffle order of rows within each slice, but only AFTER top-N has already been fixed globally
+    for _, row in allocations.iterrows():
+        bucket = row["bucket"]
+        acct_type = row["acct_type"]
+        target = int(row["target"])
+
+        subset = df[
+            (df["bucket"] == bucket) &
+            (df["acct_type"] == acct_type)
+        ].copy()
+
+        if subset.empty or target <= 0:
+            continue
+
+        subset = subset.sample(frac=1, random_state=seed).copy()
+
+        chosen_rows = []
+
+        for _, cand in subset.iterrows():
+            pair = (cand["PTY_ID"], cand["PARTY_KEY"])
+            pty = cand["PTY_ID"]
+
+            if pair in already_selected_pairs:
+                continue
+
+            if selected_count_by_pty.get(pty, 0) >= max_accounts_per_customer:
+                continue
+
+            chosen_rows.append(cand)
+            already_selected_pairs.add(pair)
+            selected_count_by_pty[pty] = selected_count_by_pty.get(pty, 0) + 1
+
+            if len(chosen_rows) >= target:
+                break
+
+        if chosen_rows:
+            sampled_parts.append(pd.DataFrame(chosen_rows))
+
+    sampled_df = pd.concat(sampled_parts, ignore_index=True) if sampled_parts else pd.DataFrame()
+
+    # 4) final overlap safety check against prior reviewed ledger
+    if prev_selected_df is not None and not prev_selected_df.empty and not sampled_df.empty:
+        overlap = sampled_df.merge(
+            prev_selected_df[["PTY_ID", "PARTY_KEY"]].drop_duplicates(),
+            on=["PTY_ID", "PARTY_KEY"],
+            how="inner"
+        )
+        if not overlap.empty:
+            raise AssertionError(f"Overlap detected with previous selections: {len(overlap)} rows")
+
+    # 5) final global cap safety check
+    if not sampled_df.empty:
+        counts = sampled_df.groupby("PTY_ID")["PARTY_KEY"].nunique()
+        bad = counts[counts > max_accounts_per_customer]
+        if not bad.empty:
+            raise AssertionError("Global max_accounts_per_customer cap violated.")
+
+    return sampled_df
+
+
+def build_summary(sampled_df):
+    if sampled_df.empty:
+        return pd.DataFrame()
+
+    return (
+        sampled_df.groupby(["bucket", "acct_type"], observed=True, as_index=False)
+        .agg(
+            sampled_accounts=("PARTY_KEY", "count"),
+            unique_customers=("PTY_ID", "nunique"),
+            avg_score=("global_max_score", "mean")
+        )
+    )
+
+
+def build_population_summary(df):
+    if df.empty:
+        return pd.DataFrame()
+
+    return (
+        df.groupby(["bucket", "acct_type"], observed=True, as_index=False)
+        .agg(
+            available_accounts=("PARTY_KEY", "count"),
+            unique_customers=("PTY_ID", "nunique"),
+            avg_score=("global_max_score", "mean")
+        )
+    )
+
+# 1. existing percentile lookup from your percentile_df
+cutoff_by_pct = dict(zip(percentile_df["percentile"], percentile_df["global_max_score"]))
+
+# 2. reviewed ledger
+# prev_selected_df should have columns: PTY_ID, PARTY_KEY
+# example:
+# prev_selected_df = pd.DataFrame(columns=["PTY_ID", "PARTY_KEY"])
+
+# 3. keep only score_date >= first day of current month
+base_df = filter_current_month_or_later(
+    pd_monthly_non_alert,
+    score_date_col="score_date",
+    current_period="2026-04"
+)
+
+# 4. define high-score population
+high_df, cutoff = get_high_score_population(
+    base_df,
+    cutoff_by_pct=cutoff_by_pct,
+    pct_cutoff=99.0,
+    score_col="global_max_score"
+)
+
+# 5. create score buckets using your existing percentile thresholds
+high_df = create_buckets_from_percentile_df(
+    high_df,
+    cutoff_by_pct=cutoff_by_pct,
+    score_col="global_max_score"
+)
+
+# 6. optional diagnostics before sampling
+population_summary_df = build_population_summary(high_df)
+print("Cutoff used:", cutoff)
+print(population_summary_df)
+print(high_df["bucket"].value_counts(dropna=False))
+print(high_df.groupby(["bucket", "acct_type"], observed=True).size())
+
+# 7. allocate targets
+allocations = allocate_targets(
+    high_df,
+    total_target=100,
+    min_per_type=2
+)
+print(allocations)
+
+# 8. sample with GLOBAL customer cap and full tie-breaker handling
+sampled_df = stratified_account_sampling_global_cap(
+    high_df,
+    allocations,
+    prev_selected_df=prev_selected_df,
+    max_accounts_per_customer=2,   # or 1
+    seed=42,
+    score_col="global_max_score",
+    score_date_col="score_date"
+)
+
+# 9. summary
+summary_df = build_summary(sampled_df)
+
+print(summary_df)
+print(sampled_df.head())
+
+# 10. optional final checks
+print(sampled_df.groupby("PTY_ID")["PARTY_KEY"].nunique().value_counts().sort_index())
+print(sampled_df.groupby("acct_type")["PARTY_KEY"].count())
+
+
+
+---------------------
+
+Here’s a clean, plain-English rationale you can use:
+
+⸻
+
+Sampling Strategy Rationale
+
+To generate a meaningful and representative set of high-risk accounts for review, we implemented a stratified sampling approach that balances risk coverage, customer diversity, and operational efficiency.
+
+First, we define the eligible population as accounts scored on or after the start of the current month and falling within the top percentile of model scores. This ensures the sample focuses on recent and materially high-risk activity, rather than relying on an arbitrary score cutoff.
+
+We then segment this high-risk population into score-based bands (buckets) using percentile thresholds derived from the full population. This allows us to capture a range of high-risk behaviors, rather than only the most extreme cases, and helps assess how model performance varies across different score levels.
+
+Within each score band, we further ensure representation across account types (consumer and business cards). Sampling is performed proportionally, with minimum coverage for each segment where available, so that both segments are meaningfully included without distorting the underlying population.
+
+To avoid repeatedly selecting the same entities and to maximize coverage, we exclude accounts that have already been reviewed in prior sampling runs.
+
+We also apply a global cap on the number of accounts selected per customer. This prevents a small number of multi-account customers from dominating the sample and ensures broader representation across unique customers. When multiple accounts exist for the same customer, we prioritize:
+
+* the highest model score
+* then the most recent score date
+* and finally a stable account identifier as a tie-breaker
+
+This ensures that the most relevant and highest-risk accounts are selected consistently.
+
+Overall, this approach produces a sample that is:
+
+* focused on current high-risk activity
+* diverse across score levels and customer segments
+* free from duplication
+* and balanced across customers
+
+making it well-suited for operational review and model validation purposes.
+
+⸻
+
+If you want, I can also shorten this into a 2–3 sentence version for slides or emails.
+
+
+
+Here are a few shorter versions depending on how concise you want it:
+
+⸻
+
+2–3 sentence version (recommended)
+
+We sample high-risk accounts using percentile-based score bands to ensure coverage across different levels of model risk, rather than focusing only on extreme cases. Within each band, we include both consumer and business accounts while excluding previously reviewed accounts. A global cap per customer ensures no single customer dominates the sample, with the highest and most recent scoring accounts prioritized.
+
+⸻
+
+Ultra-short (1–2 sentences)
+
+We stratify high-scoring accounts by percentile-based score bands and account type to ensure broad and representative coverage. We exclude previously reviewed accounts and cap selections per customer, prioritizing the highest and most recent risk signals.
+
+⸻
+
+Slide-friendly bullets
+
+* Sample from top percentile of recent high-risk accounts
+* Stratify by score bands and account type
+* Exclude previously reviewed accounts
+* Cap accounts per customer and prioritize highest, most recent scores
+
+⸻
+
+If you want, I can tailor one specifically for regulatory / model governance language vs business-friendly language.
