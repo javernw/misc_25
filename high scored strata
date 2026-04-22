@@ -1,3 +1,94 @@
+from pyspark.sql import DataFrame, Window
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+def update_global_max(global_max: DataFrame, df: DataFrame, period: str = "day") -> DataFrame:
+    if period not in ("month", "day", "week"):
+        raise ValueError("period must be 'month', 'day' or 'week'")
+
+    lhs_date_col = f"global_max_{period}_date"
+    rhs_score_col = f"{period}_max_score"
+    rhs_date_col = f"{period}_max_date"
+
+    spark = df.sparkSession
+
+    # Initialize if None
+    if global_max is None:
+        schema = T.StructType([
+            T.StructField("PTY_ID", T.StringType(), True),
+            T.StructField("PARTY_KEY", T.StringType(), True),
+            T.StructField("global_max_score", T.DoubleType(), True),
+            T.StructField(lhs_date_col, T.DateType(), True),
+        ])
+        global_max = spark.createDataFrame([], schema)
+
+    # Ensure required columns exist
+    if "global_max_score" not in global_max.columns:
+        global_max = global_max.withColumn("global_max_score", F.lit(None).cast("double"))
+
+    if lhs_date_col not in global_max.columns:
+        global_max = global_max.withColumn(lhs_date_col, F.lit(None).cast("date"))
+
+    # RHS: pick row of max score; tie-break by earliest date
+    df2 = (
+        df.withColumn("score_dbl", F.col("xgb_score").cast("double"))
+          .withColumn("date_d", F.to_date("scoring_date"))
+          .where(F.col("score_dbl").isNotNull() & F.col("date_d").isNotNull())
+    )
+
+    w = Window.partitionBy("PTY_ID", "PARTY_KEY").orderBy(
+        F.col("score_dbl").desc(),
+        F.col("date_d").asc()   # earliest date wins ties
+    )
+
+    rhs = (
+        df2.withColumn("rn", F.row_number().over(w))
+           .where(F.col("rn") == 1)
+           .select(
+               "PTY_ID",
+               "PARTY_KEY",
+               F.col("score_dbl").alias(rhs_score_col),
+               F.col("date_d").alias(rhs_date_col)
+           )
+    )
+
+    # Merge old global max with new batch max
+    merged = global_max.join(rhs, on=["PTY_ID", "PARTY_KEY"], how="outer")
+
+    lhs_score = F.col("global_max_score").cast("double")
+    rhs_score = F.col(rhs_score_col).cast("double")
+    lhs_date = F.col(lhs_date_col)
+    rhs_date = F.col(rhs_date_col)
+
+    # Update if:
+    # 1) old score is null
+    # 2) new score is greater
+    # 3) scores tie AND old date is null
+    update_cond = (
+        rhs_score.isNotNull() &
+        (
+            lhs_score.isNull() |
+            (rhs_score > lhs_score) |
+            ((rhs_score == lhs_score) & lhs_date.isNull())
+        )
+    )
+
+    out = (
+        merged.withColumn(
+                  "global_max_score",
+                  F.when(update_cond, rhs_score).otherwise(lhs_score)
+              )
+              .withColumn(
+                  lhs_date_col,
+                  F.when(update_cond, rhs_date).otherwise(lhs_date)
+              )
+              .select("PTY_ID", "PARTY_KEY", "global_max_score", lhs_date_col)
+    )
+
+    return out
+
+
+
 ---
 
 # 🔧 Step 1 — Define eligible population (percentile-based)
