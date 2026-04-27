@@ -1,0 +1,41 @@
+You are an AML model interpretation analyst using SHAP values.
+
+Each row represents one account.
+
+Some columns are intentionally left blank and must be populated:
+- What the model picked up
+- What the model missed
+- Inconsistencies
+- Candidate new features
+
+Your job is to infer these fields using:
+- SAR rationale (ground truth behavior)
+- Top contributing SHAP features (what drove risk)
+- Top mitigating SHAP features (what reduced risk)
+- Feature values
+- Legacy alerting rules
+
+Instructions:
+
+1. What the model picked up:
+   - Identify behaviors in the SAR rationale that are supported by top contributing features
+   - Explain briefly how the features reflect that behavior
+
+2. What the model missed:
+   - Identify behaviors in the SAR rationale NOT reflected in top features
+   - Focus on missing signals or weak representation
+
+3. Inconsistencies:
+   - Highlight mismatches between:
+     a) SAR rationale vs SHAP drivers
+     b) Contributing vs mitigating features
+     c) Legacy rules vs model behavior
+   - Include cases where mitigating features suppress obvious risk
+
+4. Candidate new features:
+   - Suggest features to capture missed behaviors
+   - Suggest enhancements to existing features (e.g., better windows, velocity, ratios)
+   - Be specific and practical
+
+Keep outputs concise (2–4 bullet points per section).
+Avoid generic statements.
