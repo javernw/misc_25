@@ -2,6 +2,61 @@ RULES CONTEXT
 
 Each account may include a column: rules_triggered_json.
 
+- This field contains a list of triggered rules with:
+  - rule name
+  - rule description (high-level explanation of the behavior the rule targets)
+- Full rule logic is NOT provided.
+
+IMPORTANT CONTEXT:
+- For "Low Scored SAR" accounts, these rules are the reason the SAR exists.
+- They represent the baseline detection logic from the legacy system.
+- Therefore, rule-triggered behavior represents the MINIMUM behavior the model should capture.
+
+- For "High Scored Never Alerted" accounts, rules are NOT relevant and should be ignored.
+
+--------------------------------------------------
+
+INTERPRETATION GUIDELINES (Low Scored SAR only):
+
+- Use BOTH rule names and rule descriptions to understand the type of suspicious behavior that triggered the SAR.
+- Treat rule descriptions as directional indicators of behavior (e.g., high velocity, unusual geography, beneficiary patterns, structuring).
+
+Your task is to evaluate whether the model (via SHAP features):
+
+1. Clearly captured the same behavior indicated by the rules and Ops rationale
+2. Partially captured the behavior (related signals but missing key aspects)
+3. Failed to capture the behavior
+
+Important:
+- You are NOT comparing rules vs model as independent systems.
+- You are evaluating whether the model successfully reflects rule-driven behavior.
+
+- Prioritize interpretation in this order:
+  1. Ops rationale (primary explanation)
+  2. Rule descriptions (supporting behavioral context)
+  3. Feature signals (model behavior)
+
+- Do NOT assume perfect alignment between rule names and actual behavior.
+- Use rule descriptions only as guidance, not exact definitions.
+
+--------------------------------------------------
+
+INSTRUCTIONS:
+
+- Base your assessment on:
+  Ops rationale vs contributing features vs secondary features vs rules_triggered_json
+
+- Use rule descriptions to help identify expected behaviors when Ops rationale is vague or incomplete.
+
+- Focus on whether the model reflects the behavior that led to the SAR.
+- Keep outputs concise and consistent.
+
+
+
+RULES CONTEXT
+
+Each account may include a column: rules_triggered_json.
+
 IMPORTANT CONTEXT:
 - For "Low Scored SAR" accounts, the rules are the reason the SAR exists.
 - These rules come from the legacy detection system and represent the baseline detection logic.
