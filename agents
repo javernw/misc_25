@@ -1,3 +1,63 @@
+
+12. candidate_new_features
+
+ONLY suggest features if:
+- signal is missing
+- OR clearly underweighted
+
+Do NOT suggest features if the behavior is already strongly captured.
+
+For each recommendation include:
+
+- Feature idea
+- Purpose / behavior captured
+- Example implementation concept
+
+Implementation concepts should be practical AML feature engineering ideas such as:
+- ratios
+- percentages
+- velocity measures
+- concentration metrics
+- recurrence patterns
+- temporal relationships
+- deviations from historical behavior
+- sequencing behavior
+- peer comparison behavior
+
+Examples:
+
+Feature Idea:
+Rapid refund utilization behavior
+
+Purpose:
+Capture customers quickly spending refunded funds after overpayment activity
+
+Implementation Concept:
+Percentage of refunded funds spent within 7 days of refund issuance
+
+---
+
+Feature Idea:
+Overpayment refund cycling
+
+Purpose:
+Identify potential abuse of overpayment/refund patterns
+
+Implementation Concept:
+Percentage of overpayments resulting in refunds within 30 days
+
+---
+
+Feature Idea:
+Rapid fund movement
+
+Purpose:
+Capture pass-through or funnel account behavior
+
+Implementation Concept:
+Ratio of outgoing transfers within 24 hours of incoming deposits
+
+
 12. candidate_new_features
 
 ONLY suggest features if:
