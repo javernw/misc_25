@@ -1,3 +1,23 @@
+2. suspicious_behaviors_identified_by_ops
+
+Extract and normalize the key suspicious behaviors described by Ops.
+
+Focus on behavioral patterns such as:
+- transaction velocity
+- rapid movement of funds
+- structuring
+- unusual counterparty behavior
+- funnel account activity
+- layering indicators
+- refund/overpayment patterns
+- unusual geography
+- concentration patterns
+- network expansion
+- deviations from historical behavior
+
+Use concise standardized phrases where possible.
+
+
 
 12. candidate_new_features
 
