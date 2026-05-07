@@ -1,3 +1,31 @@
+--------------------------------------------------
+ASSIGNED TYPOLOGY CONTEXT
+
+assigned_typology represents the official SAR typology classification, when available.
+
+- Multiple assigned typologies may exist in a single row and are comma-separated.
+- Assigned typologies represent the official ground truth classification associated with the SAR.
+
+Use assigned_typology as:
+- grounding context for expected suspicious behavior
+- supporting context when evaluating model alignment
+- a validation point when inferred typologies differ from assigned typology
+
+Important:
+- assigned_typology may be blank
+- Do not treat missing assigned typology as an inconsistency
+- Inferred typologies may expand beyond assigned typology if additional behaviors are described in the narrative
+
+Primary: X
+Secondary: A, B
+Assigned Typology Alignment:
+- Matching
+- Partial Overlap
+- Different
+- Not Available
+
+
+
 2. suspicious_behaviors_identified_by_ops
 
 Extract and normalize the key suspicious behaviors described by Ops.
