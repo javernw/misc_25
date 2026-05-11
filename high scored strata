@@ -1,3 +1,29 @@
+alerts_at_upper_by_month = (
+    df_base
+    .groupBy(date_col)
+    .agg(
+        F.count("*").alias("scored_accounts"),
+        F.count(F.when(F.col(score_col) >= upper_threshold, 1)).alias("alerts_at_upper_threshold")
+    )
+    .withColumn(
+        "alert_rate_at_upper_threshold",
+        F.col("alerts_at_upper_threshold") / F.col("scored_accounts")
+    )
+    .orderBy(date_col)
+)
+
+display(alerts_at_upper_by_month)
+
+avg_alerts_at_upper = (
+    alerts_at_upper_by_month
+    .agg(F.avg("alerts_at_upper_threshold").alias("avg_monthly_alerts_at_upper_threshold"))
+)
+
+display(avg_alerts_at_upper)
+
+
+
+
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
