@@ -1,0 +1,341 @@
+Below is the full updated PySpark logic with:
+
+* Static lower-threshold analysis
+* Monthly dynamic thresholding
+* 80% utilization range
+* 3-month cooldown
+* No aggressive backfill
+* Optional filter for customer/business via PLTFM_CD
+
+⸻
+
+0. Parameters
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from functools import reduce
+# ----------------------------
+# Required columns
+# ----------------------------
+account_col = "PARTY_KEY"
+date_col = "scoring_date"
+score_col = "xgb_scr"
+platform_col = "PLTFM_CD"
+# ----------------------------
+# Thresholds / capacity
+# ----------------------------
+lower_threshold = 0.067
+# Nominal Ops range = 4.5K–5.5K
+nominal_min_capacity = 4500
+nominal_max_capacity = 5500
+# 80% utilization
+utilization_pct = 0.80
+min_capacity = int(nominal_min_capacity * utilization_pct)  # 3600
+max_capacity = int(nominal_max_capacity * utilization_pct)  # 4400
+# Dynamic threshold raw candidate target
+target_capacity = 5000
+# Cooldown window
+cooldown_months = 3
+# Optional platform filter:
+# None = all accounts
+# "C" = customer
+# "B" = business
+platform_filter = None
+
+⸻
+
+1. Prepare Base Dataset
+
+df_base = (
+    df
+    .withColumn(date_col, F.to_date(F.col(date_col)))
+    .withColumn(score_col, F.col(score_col).cast("double"))
+    .filter(F.col(account_col).isNotNull())
+    .filter(F.col(score_col).isNotNull())
+    .filter(F.col(date_col).isNotNull())
+)
+if platform_filter in ["C", "B"]:
+    df_base = df_base.filter(F.col(platform_col) == platform_filter)
+
+⸻
+
+SECTION A — Static Lower Threshold Analysis
+
+A1. Monthly alert volume at lower threshold
+
+monthly_static_lower = (
+    df_base
+    .groupBy(date_col)
+    .agg(
+        F.count("*").alias("scored_accounts"),
+        F.count(F.when(F.col(score_col) >= lower_threshold, 1)).alias("alerts_at_lower_threshold")
+    )
+    .withColumn(
+        "alert_rate_at_lower_threshold",
+        F.col("alerts_at_lower_threshold") / F.col("scored_accounts")
+    )
+    .orderBy(date_col)
+)
+display(monthly_static_lower)
+
+⸻
+
+A2. Average monthly alerts at lower threshold
+
+static_lower_avg = (
+    monthly_static_lower
+    .agg(
+        F.avg("alerts_at_lower_threshold").alias("avg_monthly_alerts_at_lower_threshold"),
+        F.avg("alert_rate_at_lower_threshold").alias("avg_alert_rate_at_lower_threshold")
+    )
+)
+display(static_lower_avg)
+
+⸻
+
+A3. Max score per account across all months
+
+max_score_per_account = (
+    df_base
+    .groupBy(account_col)
+    .agg(
+        F.max(score_col).alias("max_score_across_months"),
+        F.max(date_col).alias("latest_scoring_date")
+    )
+)
+
+⸻
+
+A4. Unique accounts ever above lower threshold
+
+unique_static_lower = (
+    max_score_per_account
+    .agg(
+        F.count("*").alias("total_unique_accounts"),
+        F.count(
+            F.when(F.col("max_score_across_months") >= lower_threshold, 1)
+        ).alias("unique_accounts_ever_above_lower_threshold")
+    )
+    .withColumn(
+        "pct_unique_accounts_ever_above_lower_threshold",
+        F.col("unique_accounts_ever_above_lower_threshold") / F.col("total_unique_accounts")
+    )
+)
+display(unique_static_lower)
+
+⸻
+
+SECTION B — Dynamic Threshold + Cooldown Framework
+
+B1. Rank accounts within each month
+
+w_month_rank = Window.partitionBy(date_col).orderBy(F.col(score_col).desc())
+ranked_monthly = (
+    df_base
+    .withColumn("monthly_score_rank", F.row_number().over(w_month_rank))
+)
+
+⸻
+
+B2. Find monthly dynamic threshold around 5K raw candidates
+
+monthly_dynamic_thresholds = (
+    ranked_monthly
+    .filter(F.col("monthly_score_rank") == target_capacity)
+    .select(
+        F.col(date_col),
+        F.col(score_col).alias("dynamic_threshold")
+    )
+    .withColumn(
+        "final_dynamic_threshold",
+        F.greatest(F.col("dynamic_threshold"), F.lit(lower_threshold))
+    )
+    .orderBy(date_col)
+)
+display(monthly_dynamic_thresholds)
+
+⸻
+
+B3. Apply dynamic threshold to monthly population
+
+df_with_threshold = (
+    df_base
+    .join(monthly_dynamic_thresholds, on=date_col, how="inner")
+    .withColumn(
+        "above_dynamic_threshold",
+        F.col(score_col) >= F.col("final_dynamic_threshold")
+    )
+)
+
+⸻
+
+B4. Dynamic cooldown logic
+
+This logic:
+
+* Starts with accounts above the dynamic threshold
+* Suppresses accounts alerted within the last 3 months
+* Allows accounts to re-alert after cooldown expires
+* Does not backfill to force volume
+* Checks whether final volume is within the 80% utilization range
+
+run_dates = [
+    row[date_col]
+    for row in df_with_threshold
+        .select(date_col)
+        .distinct()
+        .orderBy(date_col)
+        .collect()
+]
+history = None
+monthly_outputs = []
+for run_date in run_dates:
+    
+    current_month = (
+        df_with_threshold
+        .filter(F.col(date_col) == F.lit(run_date))
+        .filter(F.col("above_dynamic_threshold") == True)
+    )
+    
+    if history is None:
+        current_scored = (
+            current_month
+            .withColumn("last_alert_date", F.lit(None).cast("date"))
+            .withColumn("months_since_last_alert", F.lit(None).cast("double"))
+            .withColumn("suppressed_by_cooldown", F.lit(False))
+            .withColumn("new_alert_flag", F.lit(True))
+            .withColumn("repeat_after_cooldown_flag", F.lit(False))
+        )
+    else:
+        current_scored = (
+            current_month
+            .join(history, on=account_col, how="left")
+            .withColumn(
+                "months_since_last_alert",
+                F.months_between(F.col(date_col), F.col("last_alert_date"))
+            )
+            .withColumn(
+                "suppressed_by_cooldown",
+                (F.col("last_alert_date").isNotNull()) &
+                (F.col("months_since_last_alert") < cooldown_months)
+            )
+            .withColumn(
+                "new_alert_flag",
+                F.col("last_alert_date").isNull()
+            )
+            .withColumn(
+                "repeat_after_cooldown_flag",
+                (F.col("last_alert_date").isNotNull()) &
+                (F.col("months_since_last_alert") >= cooldown_months)
+            )
+        )
+    
+    # Final sent to Ops = eligible accounts only
+    final_sent = current_scored.filter(F.col("suppressed_by_cooldown") == False)
+    
+    monthly_summary = (
+        current_scored
+        .agg(
+            F.lit(run_date).alias(date_col),
+            F.first("final_dynamic_threshold").alias("final_dynamic_threshold"),
+            F.count("*").alias("raw_candidates_above_threshold"),
+            F.count(F.when(F.col("suppressed_by_cooldown") == True, 1)).alias("suppressed_by_cooldown"),
+            F.count(F.when(F.col("new_alert_flag") == True, 1)).alias("new_alerts"),
+            F.count(F.when(F.col("repeat_after_cooldown_flag") == True, 1)).alias("repeat_after_cooldown"),
+            F.count(F.when(F.col("suppressed_by_cooldown") == False, 1)).alias("final_sent_to_ops")
+        )
+        .withColumn(
+            "within_80pct_utilization_range",
+            (F.col("final_sent_to_ops") >= min_capacity) &
+            (F.col("final_sent_to_ops") <= max_capacity)
+        )
+        .withColumn(
+            "below_80pct_utilization_range",
+            F.col("final_sent_to_ops") < min_capacity
+        )
+        .withColumn(
+            "above_80pct_utilization_range",
+            F.col("final_sent_to_ops") > max_capacity
+        )
+    )
+    
+    monthly_outputs.append(monthly_summary)
+    
+    # Update history with accounts actually sent to Ops
+    new_history = (
+        final_sent
+        .select(
+            account_col,
+            F.col(date_col).alias("last_alert_date"),
+            F.col(score_col).alias("last_alert_score")
+        )
+    )
+    
+    if history is None:
+        history = new_history
+    else:
+        history = (
+            history
+            .unionByName(new_history)
+            .withColumn(
+                "rn",
+                F.row_number().over(
+                    Window.partitionBy(account_col)
+                    .orderBy(F.col("last_alert_date").desc())
+                )
+            )
+            .filter(F.col("rn") == 1)
+            .drop("rn")
+        )
+
+⸻
+
+B5. Monthly dynamic output table
+
+dynamic_cooldown_summary = reduce(lambda a, b: a.unionByName(b), monthly_outputs)
+display(dynamic_cooldown_summary.orderBy(date_col))
+
+Expected table:
+
+scoring_date	final_dynamic_threshold	raw_candidates_above_threshold	suppressed_by_cooldown	new_alerts	repeat_after_cooldown	final_sent_to_ops	within_80pct_utilization_range
+Jan	0.40	5,063	0	5,063	0	5,063	False
+Feb	0.41	5,025	1,200	3,825	0	3,825	True
+Mar	0.39	5,088	1,450	3,638	0	3,638	True
+
+⸻
+
+B6. Overall dynamic summary
+
+dynamic_overall_summary = (
+    dynamic_cooldown_summary
+    .agg(
+        F.avg("raw_candidates_above_threshold").alias("avg_raw_candidates_above_threshold"),
+        F.avg("suppressed_by_cooldown").alias("avg_suppressed_by_cooldown"),
+        F.avg("new_alerts").alias("avg_new_alerts"),
+        F.avg("repeat_after_cooldown").alias("avg_repeat_after_cooldown"),
+        F.avg("final_sent_to_ops").alias("avg_final_sent_to_ops"),
+        F.sum("final_sent_to_ops").alias("total_alerts_sent_to_ops"),
+        F.sum("suppressed_by_cooldown").alias("total_suppressed_by_cooldown")
+    )
+)
+display(dynamic_overall_summary)
+
+⸻
+
+B7. Unique accounts sent to Ops under dynamic framework
+
+dynamic_unique_accounts = (
+    history
+    .agg(
+        F.countDistinct(account_col).alias("unique_accounts_sent_to_ops_dynamic")
+    )
+)
+display(dynamic_unique_accounts)
+
+⸻
+
+Final Interpretation
+
+Use this wording:
+
+“The static analysis applies the recall-based lower threshold of 0.067 to estimate raw alert volume and unique account exposure. The dynamic framework then derives monthly thresholds to identify approximately 5K raw high-risk candidates, applies a 3-month cooldown to suppress repeat alerts, allows accounts to re-enter after the cooldown period, and evaluates whether the final operational volume falls within the 80% utilization range of approximately 3.6K–4.4K alerts per month.”
