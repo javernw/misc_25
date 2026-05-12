@@ -1,3 +1,237 @@
+Yes — use the binary search version for the dynamic/cooldown threshold.
+
+This finds the threshold that produces roughly 3.6K–4.4K newly evented accounts/month after the 3-month lookback logic.
+
+⸻
+
+0. Parameters
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from functools import reduce
+account_col = "PARTY_KEY"
+date_col = "scoring_date"
+score_col = "xgb_scr"
+platform_col = "PLTFM_CD"
+lower_threshold = 0.067
+# Optional: None, "C", or "B"
+platform_filter = None
+# 80% utilization of 4.5K–5.5K
+min_target = 3600
+max_target = 4400
+target_incremental = 4000
+lookback_months = 3
+threshold_low = lower_threshold
+threshold_high = 1.0
+max_iterations = 20
+
+⸻
+
+1. Prepare data
+
+df_base = (
+    df
+    .withColumn(date_col, F.to_date(F.col(date_col)))
+    .withColumn(score_col, F.col(score_col).cast("double"))
+    .filter(F.col(account_col).isNotNull())
+    .filter(F.col(date_col).isNotNull())
+    .filter(F.col(score_col).isNotNull())
+)
+if platform_filter in ["C", "B"]:
+    df_base = df_base.filter(F.col(platform_col) == platform_filter)
+# Optimization: anything below lower threshold can never be evented
+df_search = df_base.filter(F.col(score_col) >= lower_threshold).cache()
+df_search.count()
+
+⸻
+
+2. Function to simulate eventing at a threshold
+
+def simulate_eventing_at_threshold(scores_df, threshold):
+    run_dates = [
+        r[date_col]
+        for r in scores_df.select(date_col).distinct().orderBy(date_col).collect()
+    ]
+    history = None
+    monthly_outputs = []
+    for run_date in run_dates:
+        current_month = (
+            scores_df
+            .filter(F.col(date_col) == F.lit(run_date))
+            .filter(F.col(score_col) >= F.lit(threshold))
+        )
+        if history is None:
+            current_scored = (
+                current_month
+                .withColumn("last_event_date", F.lit(None).cast("date"))
+                .withColumn("months_since_last_event", F.lit(None).cast("double"))
+                .withColumn("suppressed_by_lookback", F.lit(False))
+                .withColumn("new_event_flag", F.lit(True))
+            )
+        else:
+            current_scored = (
+                current_month
+                .join(history, on=account_col, how="left")
+                .withColumn(
+                    "months_since_last_event",
+                    F.months_between(F.col(date_col), F.col("last_event_date"))
+                )
+                .withColumn(
+                    "suppressed_by_lookback",
+                    (F.col("last_event_date").isNotNull()) &
+                    (F.col("months_since_last_event") < lookback_months)
+                )
+                .withColumn(
+                    "new_event_flag",
+                    F.col("suppressed_by_lookback") == False
+                )
+            )
+        newly_evented = current_scored.filter(F.col("new_event_flag") == True)
+        monthly_summary = (
+            current_scored
+            .agg(
+                F.lit(run_date).alias(date_col),
+                F.lit(float(threshold)).alias("threshold"),
+                F.count("*").alias("raw_above_threshold"),
+                F.count(F.when(F.col("suppressed_by_lookback"), 1)).alias("suppressed_by_lookback"),
+                F.count(F.when(F.col("new_event_flag"), 1)).alias("incremental_count")
+            )
+        )
+        monthly_outputs.append(monthly_summary)
+        new_history = (
+            newly_evented
+            .select(
+                account_col,
+                F.col(date_col).alias("last_event_date")
+            )
+        )
+        if history is None:
+            history = new_history
+        else:
+            history = (
+                history
+                .unionByName(new_history)
+                .withColumn(
+                    "rn",
+                    F.row_number().over(
+                        Window.partitionBy(account_col)
+                        .orderBy(F.col("last_event_date").desc())
+                    )
+                )
+                .filter(F.col("rn") == 1)
+                .drop("rn")
+            )
+    result_df = reduce(lambda a, b: a.unionByName(b), monthly_outputs)
+    return result_df
+
+⸻
+
+3. Binary search for the threshold
+
+low = threshold_low
+high = threshold_high
+best_threshold = None
+best_diff = float("inf")
+best_avg_count = None
+best_result_df = None
+for i in range(max_iterations):
+    mid = (low + high) / 2.0
+    result_df = simulate_eventing_at_threshold(df_search, mid)
+    # Exclude first month because it may have startup spike
+    ordered_dates = [
+        r[date_col]
+        for r in result_df.select(date_col).distinct().orderBy(date_col).collect()
+    ]
+    steady_state_dates = ordered_dates[1:] if len(ordered_dates) > 1 else ordered_dates
+    avg_count = (
+        result_df
+        .filter(F.col(date_col).isin(steady_state_dates))
+        .agg(F.avg("incremental_count").alias("avg_incremental_count"))
+        .collect()[0]["avg_incremental_count"]
+    )
+    diff = abs(avg_count - target_incremental)
+    if diff < best_diff:
+        best_diff = diff
+        best_threshold = mid
+        best_avg_count = avg_count
+        best_result_df = result_df
+    print(
+        f"Iteration {i+1}: threshold={mid:.6f}, "
+        f"avg_incremental={avg_count:.0f}, diff={diff:.0f}"
+    )
+    # Direction:
+    # Too many new events = threshold too low, raise threshold
+    if avg_count > max_target:
+        low = mid
+    # Too few new events = threshold too high, lower threshold
+    elif avg_count < min_target:
+        high = mid
+    # Within range, stop
+    else:
+        best_threshold = mid
+        best_avg_count = avg_count
+        best_result_df = result_df
+        break
+
+⸻
+
+4. Final output table
+
+final_dynamic_results = (
+    best_result_df
+    .withColumn(
+        "within_80pct_utilization_range",
+        (F.col("incremental_count") >= min_target) &
+        (F.col("incremental_count") <= max_target)
+    )
+    .orderBy(date_col)
+)
+display(final_dynamic_results)
+
+⸻
+
+5. Final threshold summary
+
+threshold_summary = spark.createDataFrame(
+    [
+        (
+            float(best_threshold),
+            float(best_avg_count),
+            int(min_target),
+            int(max_target),
+            int(lookback_months)
+        )
+    ],
+    [
+        "selected_threshold",
+        "steady_state_avg_incremental_count",
+        "min_target",
+        "max_target",
+        "lookback_months"
+    ]
+)
+display(threshold_summary)
+
+⸻
+
+What this does in plain English
+
+This code:
+
+1. Starts at a possible threshold.
+2. Applies the threshold month by month.
+3. Suppresses accounts that already evented in the last 3 months.
+4. Counts only the newly evented accounts.
+5. Checks the average monthly count after month 1.
+6. If too many accounts event, it raises the threshold.
+7. If too few accounts event, it lowers the threshold.
+8. Stops when the monthly average lands around 3.6K–4.4K.
+
+This is the dynamic/cooldown framework aligned to the 80% utilization rule.
+
+
+
+
 Yes — don’t hardcode upper_threshold = 0.40.
 
 You need to derive the upper threshold from the capacity target/range.
