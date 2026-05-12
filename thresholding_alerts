@@ -1,3 +1,107 @@
+Yes — don’t hardcode upper_threshold = 0.40.
+
+You need to derive the upper threshold from the capacity target/range.
+
+Because you now have two possible operating definitions:
+
+Option	Target Range
+Nominal Ops range	4,500–5,500
+80% utilization range	3,600–4,400
+
+So the static upper threshold should be calculated from the score distribution.
+
+⸻
+
+1. Set the capacity range
+
+# Nominal capacity
+nominal_min_capacity = 4500
+nominal_max_capacity = 5500
+# 80% utilization
+use_80pct_utilization = True
+utilization_pct = 0.80
+if use_80pct_utilization:
+    min_capacity = int(nominal_min_capacity * utilization_pct)  # 3600
+    max_capacity = int(nominal_max_capacity * utilization_pct)  # 4400
+else:
+    min_capacity = nominal_min_capacity
+    max_capacity = nominal_max_capacity
+target_capacity = int((min_capacity + max_capacity) / 2)
+print(min_capacity, max_capacity, target_capacity)
+
+⸻
+
+2. Find monthly threshold needed for target capacity
+
+This finds the score at the monthly target rank.
+
+w_month_rank = Window.partitionBy(date_col).orderBy(F.col(score_col).desc())
+ranked_monthly = (
+    df_base
+    .withColumn("monthly_score_rank", F.row_number().over(w_month_rank))
+)
+monthly_capacity_thresholds = (
+    ranked_monthly
+    .filter(F.col("monthly_score_rank") == target_capacity)
+    .select(
+        date_col,
+        F.col(score_col).alias("monthly_capacity_threshold")
+    )
+    .withColumn(
+        "monthly_capacity_threshold",
+        F.greatest(F.col("monthly_capacity_threshold"), F.lit(lower_threshold))
+    )
+    .orderBy(date_col)
+)
+display(monthly_capacity_thresholds)
+
+⸻
+
+3. Derive one static upper threshold
+
+For static analysis, take the average of the monthly capacity thresholds.
+
+upper_threshold_static = (
+    monthly_capacity_thresholds
+    .agg(F.avg("monthly_capacity_threshold").alias("upper_threshold_static"))
+    .collect()[0]["upper_threshold_static"]
+)
+upper_threshold_static
+
+This is your derived upper threshold.
+
+⸻
+
+4. Validate it against each month
+
+monthly_static_upper = (
+    df_base
+    .groupBy(date_col)
+    .agg(
+        F.count("*").alias("scored_accounts"),
+        F.count(F.when(F.col(score_col) >= upper_threshold_static, 1)).alias("alerts_at_upper_threshold")
+    )
+    .withColumn(
+        "within_capacity_range",
+        (F.col("alerts_at_upper_threshold") >= min_capacity) &
+        (F.col("alerts_at_upper_threshold") <= max_capacity)
+    )
+    .orderBy(date_col)
+)
+display(monthly_static_upper)
+
+⸻
+
+5. Summary wording
+
+You would explain it like this:
+
+“The upper threshold was not assumed. It was derived by identifying the monthly score cutoff needed to produce approximately the target alert volume, based on either the nominal 4.5K–5.5K range or the 80% utilization range of 3.6K–4.4K. The monthly cutoffs were then averaged to create a single static upper threshold and reapplied to validate monthly alert volumes.”
+
+So 0.40 is only valid if the data-derived monthly capacity thresholds average to 0.40.
+
+
+
 Below is the full updated PySpark logic with:
 
 * Static lower-threshold analysis
