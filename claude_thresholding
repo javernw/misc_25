@@ -1,0 +1,290 @@
+# “””
+Model Thresholding Analysis in PySpark — v2
+
+Updates from v1:
+
+- Upper threshold now targets a volume BAND (4,500–5,500) rather than a single point
+- Finds per-month scores at lower bound, midpoint, and upper bound of the band
+- Picks final threshold conservatively (stays inside band even on worst month)
+- Added 80% variant of the band as an alternative output
+- Assumes input dataset has columns: PARTY_KEY, scoring_date, xgb_scr
+  “””
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+
+spark = SparkSession.builder.appName(“ThresholdingAnalysis”).getOrCreate()
+
+# —————————————————————————
+
+# SETUP — Load your data (replace with your actual data sources)
+
+# —————————————————————————
+
+df_scores = spark.table(“your_database.scored_population”)
+df_sars = spark.table(“your_database.sar_population”)
+df_sars_typology = spark.table(“your_database.sar_typology”)
+
+# —————————————————————————
+
+# PART 1: LOWER THRESHOLD — 3rd Percentile of SAR Scores (unchanged from v1)
+
+# —————————————————————————
+
+df_sar_scores = df_sars.select(“PARTY_KEY”).join(
+df_scores.select(“PARTY_KEY”, “xgb_scr”),
+on=“PARTY_KEY”,
+how=“inner”
+)
+
+lower_threshold_row = df_sar_scores.approxQuantile(“xgb_scr”, [0.03], 0.001)
+lower_threshold = lower_threshold_row[0]
+print(f”Lower Threshold (3rd percentile of SAR scores): {lower_threshold:.4f}”)
+
+# —————————————————————————
+
+# PART 1b (OPTIONAL): Typology-level sanity check (unchanged from v1)
+
+# —————————————————————————
+
+df_sar_typology_scores = df_sars_typology.join(
+df_scores.select(“PARTY_KEY”, “xgb_scr”),
+on=“PARTY_KEY”,
+how=“inner”
+)
+
+df_typology_check = (
+df_sar_typology_scores
+.groupBy(“typology”)
+.agg(
+F.count(“PARTY_KEY”).alias(“total_sars”),
+F.sum(F.when(F.col(“xgb_scr”) < lower_threshold, 1).otherwise(0)).alias(“missed_sars”)
+)
+.withColumn(“miss_rate_pct”, F.round((F.col(“missed_sars”) / F.col(“total_sars”)) * 100, 2))
+.withColumn(“exceeds_3pct”, F.col(“miss_rate_pct”) > 3.0)
+.withColumn(“low_count_flag”, F.col(“total_sars”) < 30)
+.orderBy(F.col(“miss_rate_pct”).desc())
+)
+
+print(”\nTypology-level SAR coverage check:”)
+df_typology_check.show(truncate=False)
+
+# —————————————————————————
+
+# PART 2: ALERT VOLUME AT LOWER THRESHOLD (unchanged from v1)
+
+# —————————————————————————
+
+df_eom = df_scores.filter(
+F.col(“scoring_date”) == F.last_day(F.col(“scoring_date”))
+)
+
+df_method_a = (
+df_eom
+.groupBy(“scoring_date”)
+.agg(
+F.count(“PARTY_KEY”).alias(“total_accounts”),
+F.sum(F.when(F.col(“xgb_scr”) >= lower_threshold, 1).otherwise(0)).alias(“alerts_above_threshold”)
+)
+.withColumn(“alert_rate_pct”, F.round(
+(F.col(“alerts_above_threshold”) / F.col(“total_accounts”)) * 100, 2)
+)
+.orderBy(“scoring_date”)
+)
+
+print(”\nMethod A — Alerts per month-end date at lower threshold:”)
+df_method_a.show(truncate=False)
+
+avg_alerts_method_a = df_method_a.agg(
+F.avg(“alerts_above_threshold”).alias(“avg_monthly_alerts”)
+).collect()[0][“avg_monthly_alerts”]
+print(f”Method A — Average monthly alerts at lower threshold: {avg_alerts_method_a:,.0f}”)
+
+df_method_b = (
+df_eom
+.groupBy(“PARTY_KEY”)
+.agg(F.max(“xgb_scr”).alias(“max_xgb_scr”))
+.filter(F.col(“max_xgb_scr”) >= lower_threshold)
+.count()
+)
+print(f”\nMethod B — Unique accounts whose max score >= lower threshold: {df_method_b:,}”)
+
+# —————————————————————————
+
+# PART 3: UPPER THRESHOLD — Band-Based (NEW in v2)
+
+# 
+
+# Strategy:
+
+# For each month-end run, find the score that produces alerts at:
+
+# - LOWER bound of band (4,500)  → most permissive threshold
+
+# - MIDPOINT of band   (5,000)  → middle ground
+
+# - UPPER bound of band (5,500)  → most restrictive threshold
+
+# Then pick a final threshold that keeps the worst month inside the band.
+
+# —————————————————————————
+
+# — Config: define your alert volume band —
+
+BAND_LOWER = 4_500    # minimum acceptable alerts per month
+BAND_MID   = 5_000    # midpoint of band
+BAND_UPPER = 5_500    # maximum acceptable alerts per month
+
+# 80% variant — toggle this flag to switch between full and 80% band
+
+USE_80_PCT_VARIANT = False
+
+if USE_80_PCT_VARIANT:
+BAND_LOWER = int(BAND_LOWER * 0.8)   # 3,600
+BAND_MID   = int(BAND_MID   * 0.8)   # 4,000
+BAND_UPPER = int(BAND_UPPER * 0.8)   # 4,400
+print(f”\nUsing 80% variant band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+else:
+print(f”\nUsing standard band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+
+# Step 1: Rank accounts by score descending within each month-end date
+
+window_rank = Window.partitionBy(“scoring_date”).orderBy(F.col(“xgb_scr”).desc())
+df_ranked = df_eom.withColumn(“score_rank”, F.rank().over(window_rank))
+
+# Step 2: For each month, extract the score at each of the 3 band targets
+
+def get_score_at_rank(df_ranked, target_rank, col_alias):
+“”“Return the score corresponding to a target alert rank for each month.”””
+return (
+df_ranked
+.filter(F.col(“score_rank”) == target_rank)
+.groupBy(“scoring_date”)
+# Use max to handle ties at the boundary (multiple accounts with same score)
+.agg(F.max(“xgb_scr”).alias(col_alias))
+)
+
+df_at_lower = get_score_at_rank(df_ranked, BAND_LOWER, “score_at_band_lower”)
+df_at_mid   = get_score_at_rank(df_ranked, BAND_MID,   “score_at_band_mid”)
+df_at_upper = get_score_at_rank(df_ranked, BAND_UPPER,  “score_at_band_upper”)
+
+# Step 3: Join all three into a single summary table per month
+
+df_band_summary = (
+df_at_lower
+.join(df_at_mid,   on=“scoring_date”, how=“inner”)
+.join(df_at_upper, on=“scoring_date”, how=“inner”)
+.orderBy(“scoring_date”)
+)
+
+print(”\nPer-month scores at each point in the alert volume band:”)
+print(f”  score_at_band_lower = score where ~{BAND_LOWER:,} alerts are generated”)
+print(f”  score_at_band_mid   = score where ~{BAND_MID:,} alerts are generated”)
+print(f”  score_at_band_upper = score where ~{BAND_UPPER:,} alerts are generated”)
+df_band_summary.show(truncate=False)
+
+# Step 4: Compute averages and identify the conservative ceiling
+
+# 
+
+# Key logic:
+
+# - avg of score_at_band_mid    → naive midpoint target
+
+# - max of score_at_band_upper  → the most restrictive month’s ceiling
+
+# (i.e. the highest score threshold still inside the band on the busiest month)
+
+# - Final threshold is set between these two: safely below the midpoint
+
+# but protected against the worst month breaching the upper bound.
+
+agg_row = df_band_summary.agg(
+F.avg(“score_at_band_lower”).alias(“avg_score_at_lower”),
+F.avg(“score_at_band_mid”).alias(“avg_score_at_mid”),
+F.avg(“score_at_band_upper”).alias(“avg_score_at_upper”),
+F.max(“score_at_band_upper”).alias(“max_score_at_upper”),  # worst month ceiling
+F.min(“score_at_band_upper”).alias(“min_score_at_upper”),  # best month ceiling
+).collect()[0]
+
+avg_score_at_lower  = agg_row[“avg_score_at_lower”]
+avg_score_at_mid    = agg_row[“avg_score_at_mid”]
+avg_score_at_upper  = agg_row[“avg_score_at_upper”]
+max_score_at_upper  = agg_row[“max_score_at_upper”]  # safe ceiling
+min_score_at_upper  = agg_row[“min_score_at_upper”]
+
+print(f”\nAcross all months:”)
+print(f”  Avg score @ {BAND_LOWER:,} alerts (band lower): {avg_score_at_lower:.4f}”)
+print(f”  Avg score @ {BAND_MID:,} alerts (band mid):   {avg_score_at_mid:.4f}”)
+print(f”  Avg score @ {BAND_UPPER:,} alerts (band upper): {avg_score_at_upper:.4f}”)
+print(f”  Max score @ {BAND_UPPER:,} alerts (worst month ceiling): {max_score_at_upper:.4f}”)
+
+# Step 5: Set the recommended upper threshold
+
+# 
+
+# Use the max_score_at_upper (worst month’s ceiling) as the final threshold.
+
+# This ensures that even on the busiest month, you stay within the band.
+
+# If this ends up too close to the lower band, fall back to avg_score_at_mid.
+
+upper_threshold = max_score_at_upper
+print(f”\nRecommended Upper Threshold: {upper_threshold:.4f}”)
+print(f”  (= worst-month score @ {BAND_UPPER:,} alerts — stays inside band every month)”)
+
+# —————————————————————————
+
+# PART 3b: SANITY CHECK — Verify monthly alert volumes at final upper threshold
+
+# —————————————————————————
+
+df_sanity = (
+df_eom
+.groupBy(“scoring_date”)
+.agg(
+F.count(“PARTY_KEY”).alias(“total_accounts”),
+F.sum(
+F.when(F.col(“xgb_scr”) >= upper_threshold, 1).otherwise(0)
+).alias(“alerts_at_upper_threshold”)
+)
+.withColumn(
+“within_band”,
+F.col(“alerts_at_upper_threshold”).between(BAND_LOWER, BAND_UPPER)
+)
+.orderBy(“scoring_date”)
+)
+
+print(f”\nSanity check — monthly alerts at upper threshold {upper_threshold:.4f}:”)
+print(f”  Target band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+df_sanity.show(truncate=False)
+
+months_in_band = df_sanity.filter(F.col(“within_band”) == True).count()
+total_months   = df_sanity.count()
+avg_alerts     = df_sanity.agg(F.avg(“alerts_at_upper_threshold”)).collect()[0][0]
+
+print(f”  Months within band: {months_in_band} / {total_months}”)
+print(f”  Average monthly alerts: {avg_alerts:,.0f}”)
+
+# —————————————————————————
+
+# SUMMARY
+
+# —————————————————————————
+
+print(”\n” + “=”*60)
+print(“THRESHOLDING SUMMARY”)
+print(”=”*60)
+print(f”  Alert volume band:     [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+print(f”  80% variant active:    {USE_80_PCT_VARIANT}”)
+print()
+print(f”  Lower Threshold  (3% SAR miss rate):  {lower_threshold:.4f}”)
+print(f”  Upper Threshold  (within alert band): {upper_threshold:.4f}”)
+print()
+print(f”  Valid threshold range: [{lower_threshold:.4f}, {upper_threshold:.4f}]”)
+print()
+print(f”  Monthly alert coverage at upper threshold:”)
+print(f”    Months inside band: {months_in_band} / {total_months}”)
+print(f”    Average alerts/month: {avg_alerts:,.0f}”)
+print(”=”*60)
