@@ -1,4 +1,422 @@
 # “””
+Model Thresholding Analysis in PySpark — v3
+
+Updates from v2:
+
+- Added 3-month rolling suppression window to alert volume calculations
+- Accounts alerted in the prior 3 months are suppressed (not counted again)
+- Suppression lifts automatically after 3 months — accounts re-enter the pool
+- Parts 1 and 1b (lower threshold + typology check) are unchanged
+- Parts 2 and 3 now operate on NET new alerts after suppression is applied
+- Warm-up months (first 3) are flagged separately as they have no suppression history
+- Assumes input dataset has columns: PARTY_KEY, scoring_date, xgb_scr
+  “””
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+from dateutil.relativedelta import relativedelta
+from datetime import datetime
+
+spark = SparkSession.builder.appName(“ThresholdingAnalysis”).getOrCreate()
+
+# —————————————————————————
+
+# SETUP — Load your data (replace with your actual data sources)
+
+# —————————————————————————
+
+df_scores = spark.table(“your_database.scored_population”)
+df_sars = spark.table(“your_database.sar_population”)
+df_sars_typology = spark.table(“your_database.sar_typology”)
+
+# —————————————————————————
+
+# CONFIG
+
+# —————————————————————————
+
+SUPPRESSION_MONTHS = 3   # how many months to look back for suppression
+BAND_LOWER         = 4_500
+BAND_MID           = 5_000
+BAND_UPPER         = 5_500
+USE_80_PCT_VARIANT = False
+
+if USE_80_PCT_VARIANT:
+BAND_LOWER = int(BAND_LOWER * 0.8)   # 3,600
+BAND_MID   = int(BAND_MID   * 0.8)   # 4,000
+BAND_UPPER = int(BAND_UPPER * 0.8)   # 4,400
+print(f”Using 80% variant band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+else:
+print(f”Using standard band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+
+# —————————————————————————
+
+# PART 1: LOWER THRESHOLD — 3rd Percentile of SAR Scores (unchanged from v2)
+
+# —————————————————————————
+
+df_sar_scores = df_sars.select(“PARTY_KEY”).join(
+df_scores.select(“PARTY_KEY”, “xgb_scr”),
+on=“PARTY_KEY”,
+how=“inner”
+)
+
+lower_threshold_row = df_sar_scores.approxQuantile(“xgb_scr”, [0.03], 0.001)
+lower_threshold = lower_threshold_row[0]
+print(f”\nLower Threshold (3rd percentile of SAR scores): {lower_threshold:.4f}”)
+
+# —————————————————————————
+
+# PART 1b (OPTIONAL): Typology-level sanity check (unchanged from v2)
+
+# —————————————————————————
+
+df_sar_typology_scores = df_sars_typology.join(
+df_scores.select(“PARTY_KEY”, “xgb_scr”),
+on=“PARTY_KEY”,
+how=“inner”
+)
+
+df_typology_check = (
+df_sar_typology_scores
+.groupBy(“typology”)
+.agg(
+F.count(“PARTY_KEY”).alias(“total_sars”),
+F.sum(F.when(F.col(“xgb_scr”) < lower_threshold, 1).otherwise(0)).alias(“missed_sars”)
+)
+.withColumn(“miss_rate_pct”, F.round((F.col(“missed_sars”) / F.col(“total_sars”)) * 100, 2))
+.withColumn(“exceeds_3pct”, F.col(“miss_rate_pct”) > 3.0)
+.withColumn(“low_count_flag”, F.col(“total_sars”) < 30)
+.orderBy(F.col(“miss_rate_pct”).desc())
+)
+
+print(”\nTypology-level SAR coverage check:”)
+df_typology_check.show(truncate=False)
+
+# —————————————————————————
+
+# PART 2 SETUP: Filter to end-of-month runs and collect the sorted date list
+
+# —————————————————————————
+
+df_eom = df_scores.filter(
+F.col(“scoring_date”) == F.last_day(F.col(“scoring_date”))
+)
+
+# Collect the sorted list of distinct month-end dates
+
+# We need these as Python objects to compute lookback windows per month
+
+eom_dates = sorted([
+row[“scoring_date”]
+for row in df_eom.select(“scoring_date”).distinct().collect()
+])
+
+print(f”\nMonth-end dates found: {[str(d) for d in eom_dates]}”)
+
+# —————————————————————————
+
+# SUPPRESSION HELPER
+
+# 
+
+# For a given month-end date T and a candidate threshold:
+
+# - suppressed accounts = those that scored >= threshold in any of the
+
+# SUPPRESSION_MONTHS prior month-end dates
+
+# - net alerts = accounts scoring >= threshold in T that are NOT suppressed
+
+# 
+
+# We build this as a reusable function so it can be called once for the
+
+# lower threshold volume check AND iteratively during upper threshold search.
+
+# —————————————————————————
+
+def build_suppression_lookup(df_eom, eom_dates, threshold, suppression_months=3):
+“””
+For each month-end date, identify which PARTY_KEYs are suppressed
+(i.e. already alerted above threshold in the prior N months).
+
+```
+Returns a DataFrame with columns:
+    scoring_date  — the current month-end date
+    PARTY_KEY     — suppressed account
+"""
+suppression_frames = []
+
+for current_date in eom_dates:
+    # Find the prior N month-end dates relative to current_date
+    prior_dates = [d for d in eom_dates if d < current_date]
+    lookback_dates = prior_dates[-suppression_months:]  # most recent N prior dates
+
+    if not lookback_dates:
+        # No history available — no suppression for this month (warm-up)
+        continue
+
+    # Accounts alerted in any of the lookback months
+    suppressed = (
+        df_eom
+        .filter(F.col("scoring_date").isin(lookback_dates))
+        .filter(F.col("xgb_scr") >= threshold)
+        .select("PARTY_KEY")
+        .distinct()
+        .withColumn("scoring_date", F.lit(current_date))
+    )
+    suppression_frames.append(suppressed)
+
+if not suppression_frames:
+    # Edge case: no suppression history at all (e.g. only 1 month of data)
+    return spark.createDataFrame([], df_eom.select("PARTY_KEY", "scoring_date").schema)
+
+return suppression_frames[0].unionAll(*suppression_frames[1:])
+```
+
+def compute_net_alerts(df_eom, eom_dates, threshold, suppression_months=3):
+“””
+For each month-end date, compute:
+- gross_alerts      : accounts above threshold (no suppression)
+- suppressed_count  : accounts above threshold but suppressed
+- net_alerts        : gross - suppressed (new alerts only)
+- warm_up_month     : True if fewer than N months of history available
+
+```
+Returns a summary DataFrame with one row per scoring_date.
+"""
+df_suppressed = build_suppression_lookup(df_eom, eom_dates, threshold, suppression_months)
+
+# Tag each candidate alert with whether it is suppressed
+df_candidates = df_eom.filter(F.col("xgb_scr") >= threshold)
+
+df_tagged = (
+    df_candidates
+    .join(
+        df_suppressed.withColumn("is_suppressed", F.lit(True)),
+        on=["PARTY_KEY", "scoring_date"],
+        how="left"
+    )
+    .withColumn("is_suppressed", F.coalesce(F.col("is_suppressed"), F.lit(False)))
+)
+
+# Summarise per month
+df_summary = (
+    df_tagged
+    .groupBy("scoring_date")
+    .agg(
+        F.count("PARTY_KEY").alias("gross_alerts"),
+        F.sum(F.when(F.col("is_suppressed"), 1).otherwise(0)).alias("suppressed_count"),
+        F.sum(F.when(~F.col("is_suppressed"), 1).otherwise(0)).alias("net_alerts"),
+    )
+    .orderBy("scoring_date")
+)
+
+# Flag warm-up months (fewer than SUPPRESSION_MONTHS of prior data)
+warm_up_dates = eom_dates[:suppression_months]
+df_summary = df_summary.withColumn(
+    "warm_up_month",
+    F.col("scoring_date").isin(warm_up_dates)
+)
+
+return df_summary
+```
+
+# —————————————————————————
+
+# PART 2: ALERT VOLUME AT LOWER THRESHOLD — with suppression
+
+# —————————————————————————
+
+print(f”\n{’=’*60}”)
+print(“PART 2 — Alert volume at lower threshold (with suppression)”)
+print(f”{’=’*60}”)
+
+df_lower_volume = compute_net_alerts(df_eom, eom_dates, lower_threshold, SUPPRESSION_MONTHS)
+df_lower_volume.show(truncate=False)
+
+# Exclude warm-up months from average (they have no suppression history)
+
+avg_net_lower = (
+df_lower_volume
+.filter(~F.col(“warm_up_month”))
+.agg(F.avg(“net_alerts”).alias(“avg_net_alerts”))
+.collect()[0][“avg_net_alerts”]
+)
+print(f”Average net alerts/month at lower threshold (excl. warm-up): {avg_net_lower:,.0f}”)
+
+# —————————————————————————
+
+# PART 3: UPPER THRESHOLD — Band-Based with Suppression (updated from v2)
+
+# 
+
+# Strategy: iterate over candidate thresholds to find the score that keeps
+
+# NET alerts (after suppression) within the band [BAND_LOWER, BAND_UPPER].
+
+# 
+
+# We use a two-pass approach:
+
+# Pass 1 — coarse search: step through score percentiles to bracket the range
+
+# Pass 2 — fine search:   binary search within that bracket for precision
+
+# —————————————————————————
+
+print(f”\n{’=’*60}”)
+print(“PART 3 — Finding upper threshold with suppression applied”)
+print(f”{’=’*60}”)
+
+def avg_net_alerts_at_threshold(df_eom, eom_dates, threshold, suppression_months,
+exclude_warmup=True):
+“””
+Return the average monthly net alert count at a given threshold,
+optionally excluding warm-up months from the average.
+“””
+df_summary = compute_net_alerts(df_eom, eom_dates, threshold, suppression_months)
+df_filtered = df_summary.filter(~F.col(“warm_up_month”)) if exclude_warmup else df_summary
+result = df_filtered.agg(F.avg(“net_alerts”)).collect()[0][0]
+return result or 0.0
+
+# — Pass 1: Coarse search across score percentiles —
+
+# Sample candidate thresholds from the score distribution
+
+# to find the rough bracket containing our target band.
+
+percentile_steps = [i / 100 for i in range(50, 100)]   # 50th to 99th percentile
+candidate_thresholds = df_eom.approxQuantile(“xgb_scr”, percentile_steps, 0.005)
+
+print(”\nPass 1 — Coarse search across score percentiles:”)
+print(f”  Target net alert band: [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+
+coarse_results = []
+for pct, thresh in zip(percentile_steps, candidate_thresholds):
+avg_net = avg_net_alerts_at_threshold(
+df_eom, eom_dates, thresh, SUPPRESSION_MONTHS
+)
+coarse_results.append((pct, thresh, avg_net))
+print(f”  Percentile {pct:.0%}  threshold={thresh:.4f}  avg_net_alerts={avg_net:,.0f}”)
+# Stop once we’ve passed below the lower band (thresholds go up, alerts go down)
+if avg_net < BAND_LOWER:
+break
+
+# Find the bracket: last entry inside or above band, first entry below band
+
+in_band  = [(p, t, a) for p, t, a in coarse_results if a >= BAND_LOWER]
+below    = [(p, t, a) for p, t, a in coarse_results if a < BAND_LOWER]
+
+bracket_lo = in_band[-1][1]  if in_band else candidate_thresholds[0]
+bracket_hi = below[0][1]     if below   else candidate_thresholds[-1]
+print(f”\n  Bracket found: [{bracket_lo:.4f}, {bracket_hi:.4f}]”)
+
+# — Pass 2: Binary search within the bracket —
+
+# Find the threshold where avg net alerts is as close to BAND_MID as possible
+
+# while the worst month stays <= BAND_UPPER.
+
+print(”\nPass 2 — Binary search within bracket:”)
+
+lo, hi    = bracket_lo, bracket_hi
+tolerance = 10      # stop when avg net alerts is within 10 of BAND_MID
+max_iter  = 20      # safety cap on iterations
+best_threshold = None
+best_avg_net   = None
+
+for i in range(max_iter):
+mid = (lo + hi) / 2
+avg_net = avg_net_alerts_at_threshold(
+df_eom, eom_dates, mid, SUPPRESSION_MONTHS
+)
+print(f”  Iter {i+1:02d}  threshold={mid:.5f}  avg_net_alerts={avg_net:,.0f}”)
+
+```
+if abs(avg_net - BAND_MID) <= tolerance:
+    best_threshold = mid
+    best_avg_net   = avg_net
+    print(f"  Converged at threshold={mid:.5f}")
+    break
+
+if avg_net > BAND_MID:
+    lo = mid   # need a higher threshold to reduce alerts
+else:
+    hi = mid   # need a lower threshold to increase alerts
+
+best_threshold = mid
+best_avg_net   = avg_net
+```
+
+upper_threshold = best_threshold
+print(f”\nUpper Threshold (with suppression): {upper_threshold:.4f}”)
+print(f”Average net alerts at this threshold: {best_avg_net:,.0f}”)
+
+# —————————————————————————
+
+# PART 3b: FULL SANITY CHECK — Monthly breakdown at final upper threshold
+
+# —————————————————————————
+
+print(f”\n{’=’*60}”)
+print(“PART 3b — Sanity check at final upper threshold”)
+print(f”{’=’*60}”)
+
+df_final = compute_net_alerts(df_eom, eom_dates, upper_threshold, SUPPRESSION_MONTHS)
+
+df_final_display = (
+df_final
+.withColumn(“net_within_band”, F.col(“net_alerts”).between(BAND_LOWER, BAND_UPPER))
+)
+
+print(f”\nMonthly alert breakdown at threshold {upper_threshold:.4f}:”)
+print(f”  Columns: scoring_date | gross_alerts | suppressed_count | net_alerts | warm_up | within_band”)
+df_final_display.show(truncate=False)
+
+# Exclude warm-up months from final stats
+
+df_calibration = df_final_display.filter(~F.col(“warm_up_month”))
+months_in_band  = df_calibration.filter(F.col(“net_within_band”)).count()
+total_months    = df_calibration.count()
+final_avg_net   = df_calibration.agg(F.avg(“net_alerts”)).collect()[0][0]
+avg_suppressed  = df_calibration.agg(F.avg(“suppressed_count”)).collect()[0][0]
+
+print(f”  Months within band [{BAND_LOWER:,}–{BAND_UPPER:,}]: {months_in_band} / {total_months}”)
+print(f”  Average net alerts/month:   {final_avg_net:,.0f}”)
+print(f”  Average suppressed/month:   {avg_suppressed:,.0f}  (suppression pool ~{avg_suppressed * SUPPRESSION_MONTHS:,.0f} accounts)”)
+
+# —————————————————————————
+
+# SUMMARY
+
+# —————————————————————————
+
+print(”\n” + “=”*60)
+print(“THRESHOLDING SUMMARY”)
+print(”=”*60)
+print(f”  Alert volume band:          [{BAND_LOWER:,} – {BAND_UPPER:,}]”)
+print(f”  80% variant active:         {USE_80_PCT_VARIANT}”)
+print(f”  Suppression window:         {SUPPRESSION_MONTHS} months”)
+print()
+print(f”  Lower Threshold  (3% SAR miss rate):         {lower_threshold:.4f}”)
+print(f”  Upper Threshold  (net alerts within band):   {upper_threshold:.4f}”)
+print()
+print(f”  Valid threshold range: [{lower_threshold:.4f}, {upper_threshold:.4f}]”)
+print()
+print(f”  At upper threshold (excl. warm-up months):”)
+print(f”    Months inside band:       {months_in_band} / {total_months}”)
+print(f”    Avg net alerts/month:     {final_avg_net:,.0f}”)
+print(f”    Avg suppressed/month:     {avg_suppressed:,.0f}”)
+print(”=”*60)
+
+
+
+
+
+# “””
 Model Thresholding Analysis in PySpark — v2
 
 Updates from v1:
