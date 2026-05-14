@@ -1,3 +1,41 @@
+Private Sub AddFeatureDescriptionsAsNotes( _
+    wsFeature As Worksheet, _
+    wsReason As Worksheet, _
+    sourceStartRow As Long, _
+    rowCount As Long)
+
+    Dim i As Long
+    Dim sourceRow As Long
+    Dim destRow As Long
+    Dim descText As String
+    Dim targetCell As Range
+    
+    For i = 0 To rowCount - 1
+        
+        sourceRow = sourceStartRow + i
+        destRow = 1 + i   ' because ReasonReview paste starts at row 1
+        
+        descText = Trim(CStr(wsFeature.Cells(sourceRow, "J").Value))
+        Set targetCell = wsReason.Cells(destRow, "E")
+        
+        ' Remove any existing note/comment first
+        On Error Resume Next
+        targetCell.ClearComments
+        targetCell.ClearNotes
+        On Error GoTo 0
+        
+        ' Only add hover text if description exists
+        If Len(descText) > 0 Then
+            targetCell.AddComment descText
+            targetCell.Comment.Visible = False
+        End If
+        
+    Next i
+
+End Sub
+
+
+
 Option Explicit
 
 Sub GenerateKnownSarTemplates()
