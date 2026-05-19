@@ -1,0 +1,243 @@
+Option Explicit
+
+Sub UpdateHighScoreReasonReviewSheets()
+
+    Dim folderPath As String
+    Dim masterPath As Variant
+    Dim templatePath As Variant
+    
+    Dim wbMaster As Workbook
+    Dim wbTemplate As Workbook
+    Dim wbTarget As Workbook
+    
+    Dim wsFeature As Worksheet
+    Dim wsOldReason As Worksheet
+    Dim wsNewReason As Worksheet
+    
+    Dim fileName As String
+    Dim fullPath As String
+    Dim refVal As String
+    
+    Dim featureLastRow As Long
+    Dim copyRange As Range
+    
+    Dim filesUpdated As Long
+    Dim filesSkipped As Long
+    
+    Dim screenState As Boolean
+    Dim alertsState As Boolean
+    Dim calcState As XlCalculation
+    
+    On Error GoTo ErrHandler
+    
+    ' Select folder with existing workbooks to update
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Select Folder Containing High Score Workbooks to Update"
+        If .Show <> -1 Then Exit Sub
+        folderPath = .SelectedItems(1)
+    End With
+    
+    ' Select master input workbook
+    masterPath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Master Input Workbook")
+    If masterPath = False Then Exit Sub
+    
+    ' Select clean template workbook
+    templatePath = Application.GetOpenFilename("Excel Files (*.xlsx; *.xlsm), *.xlsx; *.xlsm", , "Select Clean Template Workbook")
+    If templatePath = False Then Exit Sub
+    
+    screenState = Application.ScreenUpdating
+    alertsState = Application.DisplayAlerts
+    calcState = Application.Calculation
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.Calculation = xlCalculationAutomatic
+    
+    Set wbMaster = Workbooks.Open(CStr(masterPath))
+    Set wsFeature = wbMaster.Worksheets("CaseFeatureTop50")
+    
+    Set wbTemplate = Workbooks.Open(CStr(templatePath), ReadOnly:=True)
+    
+    fileName = Dir(folderPath & "\*.xlsx")
+    
+    Do While fileName <> ""
+        
+        fullPath = folderPath & "\" & fileName
+        
+        Set wbTarget = Nothing
+        Set wsOldReason = Nothing
+        Set wsNewReason = Nothing
+        
+        On Error GoTo FileError
+        
+        Set wbTarget = Workbooks.Open(fullPath)
+        
+        ' Read reference from old ReasonReview before deleting it
+        Set wsOldReason = wbTarget.Worksheets("ReasonReview")
+        refVal = Trim(CStr(wsOldReason.Range("D10").Value))
+        
+        If Len(refVal) = 0 Then
+            filesSkipped = filesSkipped + 1
+            wbTarget.Close SaveChanges:=False
+            GoTo NextFile
+        End If
+        
+        ' Refresh master CaseFeatureTop50 using reference
+        wsFeature.Range("D10").Value = refVal
+        DoEvents
+        Application.Calculate
+        
+        ' Delete old ReasonReview
+        wsOldReason.Delete
+        
+        ' Copy clean ReasonReview from template into target workbook
+        wbTemplate.Worksheets("ReasonReview").Copy After:=wbTarget.Worksheets(wbTarget.Worksheets.Count)
+        Set wsNewReason = wbTarget.Worksheets(wbTarget.Worksheets.Count)
+        wsNewReason.Name = "ReasonReview"
+        
+        ' Restore reference into new ReasonReview
+        wsNewReason.Range("D10").Value = refVal
+        
+        ' Copy refreshed data from CaseFeatureTop50 into new ReasonReview
+        wsNewReason.Range("C:H").ClearContents
+        
+        featureLastRow = GetLastUsedRowAcrossColumns(wsFeature, 3, 8) ' C:H
+        
+        If featureLastRow >= 2 Then
+            Set copyRange = wsFeature.Range("C2:H" & featureLastRow)
+            wsNewReason.Range("C1").Resize(copyRange.Rows.Count, copyRange.Columns.Count).Value = copyRange.Value
+            
+            FormatSarTextInColumnG wsNewReason, 1, copyRange.Rows.Count
+            AddFeatureDescriptionsAsNotes wsFeature, wsNewReason, 2, copyRange.Rows.Count
+        End If
+        
+        ' Navigate to Front sheet and top
+        With wbTarget.Worksheets("Front")
+            .Activate
+            .Range("A1").Select
+        End With
+        
+        wbTarget.Save
+        wbTarget.Close SaveChanges:=False
+        
+        filesUpdated = filesUpdated + 1
+        
+NextFile:
+        fileName = Dir()
+        On Error GoTo ErrHandler
+        
+    Loop
+    
+    wbMaster.Close SaveChanges:=False
+    wbTemplate.Close SaveChanges:=False
+    
+    Application.ScreenUpdating = screenState
+    Application.DisplayAlerts = alertsState
+    Application.Calculation = calcState
+    
+    MsgBox filesUpdated & " workbook(s) updated." & vbCrLf & _
+           filesSkipped & " workbook(s) skipped.", vbInformation
+    
+    Exit Sub
+
+FileError:
+    filesSkipped = filesSkipped + 1
+    If Not wbTarget Is Nothing Then wbTarget.Close SaveChanges:=False
+    Resume NextFile
+
+ErrHandler:
+    MsgBox "Error: " & Err.Description, vbExclamation
+    
+    On Error Resume Next
+    If Not wbTarget Is Nothing Then wbTarget.Close SaveChanges:=False
+    If Not wbMaster Is Nothing Then wbMaster.Close SaveChanges:=False
+    If Not wbTemplate Is Nothing Then wbTemplate.Close SaveChanges:=False
+    
+    Application.ScreenUpdating = screenState
+    Application.DisplayAlerts = alertsState
+    Application.Calculation = calcState
+
+End Sub
+
+Private Function GetLastUsedRowAcrossColumns(ws As Worksheet, firstCol As Long, lastCol As Long) As Long
+    Dim c As Long
+    Dim maxRow As Long
+    Dim thisRow As Long
+    
+    maxRow = 1
+    
+    For c = firstCol To lastCol
+        thisRow = ws.Cells(ws.Rows.Count, c).End(xlUp).Row
+        If thisRow > maxRow Then maxRow = thisRow
+    Next c
+    
+    GetLastUsedRowAcrossColumns = maxRow
+End Function
+
+Private Sub FormatSarTextInColumnG(ws As Worksheet, startRow As Long, rowCount As Long)
+
+    Dim r As Long
+    Dim cell As Range
+    Dim txt As String
+    Dim sepPos As Long
+    
+    For r = startRow To startRow + rowCount - 1
+        
+        Set cell = ws.Cells(r, "G")
+        txt = CStr(cell.Value)
+        
+        If Len(txt) > 0 Then
+            
+            cell.Font.ColorIndex = xlAutomatic
+            sepPos = InStr(1, txt, "|")
+            
+            If sepPos > 0 Then
+                If sepPos > 1 Then
+                    cell.Characters(1, sepPos - 1).Font.Color = RGB(0, 128, 0)
+                End If
+                
+                If sepPos < Len(txt) Then
+                    cell.Characters(sepPos + 1, Len(txt) - sepPos).Font.Color = RGB(255, 0, 0)
+                End If
+            End If
+            
+        End If
+        
+    Next r
+
+End Sub
+
+Private Sub AddFeatureDescriptionsAsNotes( _
+    wsFeature As Worksheet, _
+    wsReason As Worksheet, _
+    sourceStartRow As Long, _
+    rowCount As Long)
+
+    Dim i As Long
+    Dim sourceRow As Long
+    Dim destRow As Long
+    Dim descText As String
+    Dim targetCell As Range
+    
+    For i = 0 To rowCount - 1
+        
+        sourceRow = sourceStartRow + i
+        destRow = 1 + i
+        
+        descText = Trim(CStr(wsFeature.Cells(sourceRow, "J").Value))
+        Set targetCell = wsReason.Cells(destRow, "E")
+        
+        On Error Resume Next
+        targetCell.ClearComments
+        targetCell.ClearNotes
+        On Error GoTo 0
+        
+        If Len(descText) > 0 Then
+            targetCell.AddComment descText
+            targetCell.Comment.Visible = False
+        End If
+        
+    Next i
+
+End Sub
+
