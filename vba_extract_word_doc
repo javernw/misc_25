@@ -1,3 +1,40 @@
+' Prompt user for source folder
+sourceFolder = PickFolder("Select the folder containing the Word documents")
+
+If sourceFolder = "" Then
+    MsgBox "No source folder selected. Macro cancelled.", vbExclamation
+    Exit Sub
+End If
+
+' Prompt user for output folder
+outputFolder = PickFolder("Select the folder where the output Excel file should be saved")
+
+If outputFolder = "" Then
+    MsgBox "No output folder selected. Macro cancelled.", vbExclamation
+    Exit Sub
+End If
+
+
+Function PickFolder(dialogTitle As String) As String
+
+    Dim fd As FileDialog
+    
+    Set fd = Application.FileDialog(msoFileDialogFolderPicker)
+    
+    With fd
+        .Title = dialogTitle
+        .AllowMultiSelect = False
+        
+        If .Show = -1 Then
+            PickFolder = .SelectedItems(1)
+        Else
+            PickFolder = ""
+        End If
+    End With
+
+End Function
+
+
 Option Explicit
 
 Sub ExtractScenarioTablesAndRatings()
