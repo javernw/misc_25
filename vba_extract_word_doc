@@ -78,6 +78,38 @@ Sub AppendAllSheetsIntoOne()
 
 End Sub
 
+
+Sub ExtractRatingAndCoverage(docText As String, ByRef ratingPct As String, ByRef coverageRating As String)
+
+    Dim re As Object
+    Dim matches As Object
+    
+    docText = Replace(docText, vbCr, " ")
+    docText = Replace(docText, vbLf, " ")
+    docText = Replace(docText, Chr(13), " ")
+    docText = Replace(docText, Chr(7), " ")
+    docText = NormalizeSpaces(docText)
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = False
+    re.IgnoreCase = True
+    
+    ' Looks specifically for:
+    ' suggested rating would be (75%). Therefore, Substantial coverage
+    re.Pattern = "suggested\s+rating\s+would\s+be\s*\(([0-9]+(?:\.[0-9]+)?%)\).*?therefore[, ]*\s*(Extensive\s+coverage|Substantial\s+coverage|Moderate\s+coverage|Limited\s+coverage|No\s+coverage)"
+    
+    If re.Test(docText) Then
+        Set matches = re.Execute(docText)
+        ratingPct = matches(0).SubMatches(0)
+        coverageRating = NormalizeSpaces(matches(0).SubMatches(1))
+    Else
+        ratingPct = ""
+        coverageRating = ""
+    End If
+
+End Sub
+
+
 Function GetLastUsedRow(ws As Worksheet) As Long
 
     Dim lastCell As Range
