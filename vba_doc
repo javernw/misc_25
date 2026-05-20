@@ -1,3 +1,22 @@
+Function GetFileNameWithoutExtension(fileName As String) As String
+
+    Dim dotPosition As Long
+    
+    dotPosition = InStrRev(fileName, ".")
+    
+    If dotPosition > 0 Then
+        GetFileNameWithoutExtension = Left(fileName, dotPosition - 1)
+    Else
+        GetFileNameWithoutExtension = fileName
+    End If
+
+End Function
+
+sheetName = GetFileNameWithoutExtension(fileName)
+sheetName = MakeValidSheetName(sheetName)
+sheetName = Left(sheetName, 31)
+sheetName = GetUniqueSheetName(outputWb, sheetName)
+
 Option Explicit
 
 Sub ExtractScenarioTablesAndRatings()
