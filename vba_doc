@@ -1,0 +1,464 @@
+Option Explicit
+
+Sub ExtractScenarioTablesAndRatings()
+
+    Dim sourceFolder As String
+    Dim outputFolder As String
+    Dim outputPath As String
+    
+    Dim fileName As String
+    Dim fullPath As String
+    Dim fileModifiedDate As Date
+    Dim fileSize As Long
+    
+    Dim wdApp As Object
+    Dim wdDoc As Object
+    Dim wdTable As Object
+    
+    Dim macroWb As Workbook
+    Dim outputWb As Workbook
+    Dim wsOut As Worksheet
+    Dim wsSummary As Worksheet
+    Dim wsProcessed As Worksheet
+    
+    Dim sheetName As String
+    Dim nextSummaryRow As Long
+    Dim foundTable As Boolean
+    
+    Dim ratingPct As String
+    Dim coverageRating As String
+    Dim statusText As String
+    
+    On Error GoTo FatalError
+    
+    Set macroWb = ThisWorkbook
+    Set wsProcessed = macroWb.Worksheets("Processed Files")
+    
+    sourceFolder = PickFolder("Select the folder containing the Word documents")
+    If sourceFolder = "" Then Exit Sub
+    
+    outputFolder = PickFolder("Select the folder where the output Excel file should be saved")
+    If outputFolder = "" Then Exit Sub
+    
+    If Right(sourceFolder, 1) <> "\" Then sourceFolder = sourceFolder & "\"
+    If Right(outputFolder, 1) <> "\" Then outputFolder = outputFolder & "\"
+    
+    outputPath = GetAvailableOutputPath(outputFolder, "Coverage_Extraction_Output", "xlsx")
+    
+    Set outputWb = Workbooks.Add
+    
+    Application.DisplayAlerts = False
+    outputWb.SaveAs Filename:=outputPath, FileFormat:=xlOpenXMLWorkbook
+    Application.DisplayAlerts = True
+    
+    Set wsSummary = GetOrCreateSheet(outputWb, "Coverage Summary")
+    wsSummary.Cells.Clear
+    wsSummary.Range("A1:E1").Value = Array("File Name", "Sheet Name", "Suggested Rating %", "Coverage Rating", "Status")
+    nextSummaryRow = 2
+    
+    Set wdApp = CreateObject("Word.Application")
+    wdApp.Visible = False
+    
+    fileName = Dir(sourceFolder & "*.docx")
+    
+    Do While fileName <> ""
+        
+        fullPath = sourceFolder & fileName
+        fileModifiedDate = FileDateTime(fullPath)
+        fileSize = FileLen(fullPath)
+        
+        If WasFileProcessed(wsProcessed, fileName, fileModifiedDate, fileSize) Then
+            fileName = Dir
+            GoTo NextFile
+        End If
+        
+        foundTable = False
+        ratingPct = ""
+        coverageRating = ""
+        statusText = ""
+        sheetName = ""
+        
+        On Error GoTo FileError
+        
+        Set wdDoc = wdApp.Documents.Open(fullPath, ReadOnly:=True)
+        
+        sheetName = GetLeadingNumber(fileName)
+        
+        If sheetName = "" Then
+            sheetName = Left(Replace(fileName, ".docx", ""), 31)
+        End If
+        
+        sheetName = MakeValidSheetName(sheetName)
+        sheetName = GetUniqueSheetName(outputWb, sheetName)
+        
+        ExtractRatingAndCoverage wdDoc.Content.Text, ratingPct, coverageRating
+        
+        For Each wdTable In wdDoc.Tables
+            
+            If IsScenarioTable(wdTable) Then
+                
+                Set wsOut = outputWb.Worksheets.Add(After:=outputWb.Worksheets(outputWb.Worksheets.Count))
+                wsOut.Name = sheetName
+                
+                CopyWordTableToSheet wdTable, wsOut
+                
+                foundTable = True
+                Exit For
+                
+            End If
+            
+        Next wdTable
+        
+        If foundTable = False Then
+            statusText = "Matching table not found"
+        Else
+            statusText = "Extracted"
+        End If
+        
+        wsSummary.Cells(nextSummaryRow, 1).Value = fileName
+        wsSummary.Cells(nextSummaryRow, 2).Value = sheetName
+        wsSummary.Cells(nextSummaryRow, 3).Value = ratingPct
+        wsSummary.Cells(nextSummaryRow, 4).Value = coverageRating
+        wsSummary.Cells(nextSummaryRow, 5).Value = statusText
+        
+        LogProcessedFile wsProcessed, fileName, fileModifiedDate, fileSize, sheetName, statusText
+        
+        nextSummaryRow = nextSummaryRow + 1
+        
+        wdDoc.Close SaveChanges:=False
+        Set wdDoc = Nothing
+        
+        wsSummary.Columns.AutoFit
+        outputWb.Save
+        macroWb.Save
+        
+        On Error GoTo FatalError
+        
+NextFile:
+        fileName = Dir
+        
+    Loop
+    
+    wdApp.Quit
+    Set wdApp = Nothing
+    
+    outputWb.Save
+    
+    MsgBox "Extraction complete. Output saved here:" & vbCrLf & outputPath, vbInformation
+    Exit Sub
+
+FileError:
+    statusText = "Error: " & Err.Description
+    
+    wsSummary.Cells(nextSummaryRow, 1).Value = fileName
+    wsSummary.Cells(nextSummaryRow, 2).Value = sheetName
+    wsSummary.Cells(nextSummaryRow, 3).Value = ratingPct
+    wsSummary.Cells(nextSummaryRow, 4).Value = coverageRating
+    wsSummary.Cells(nextSummaryRow, 5).Value = statusText
+    
+    LogProcessedFile wsProcessed, fileName, fileModifiedDate, fileSize, sheetName, statusText
+    
+    nextSummaryRow = nextSummaryRow + 1
+    
+    On Error Resume Next
+    If Not wdDoc Is Nothing Then wdDoc.Close SaveChanges:=False
+    Set wdDoc = Nothing
+    
+    outputWb.Save
+    macroWb.Save
+    
+    On Error GoTo FatalError
+    Resume NextFile
+
+FatalError:
+    On Error Resume Next
+    
+    If Not wdDoc Is Nothing Then wdDoc.Close SaveChanges:=False
+    If Not wdApp Is Nothing Then wdApp.Quit
+    
+    If Not outputWb Is Nothing Then outputWb.Save
+    If Not macroWb Is Nothing Then macroWb.Save
+    
+    MsgBox "Macro stopped because of an error:" & vbCrLf & Err.Description, vbExclamation
+
+End Sub
+
+Function PickFolder(dialogTitle As String) As String
+
+    Dim fd As FileDialog
+    
+    Set fd = Application.FileDialog(msoFileDialogFolderPicker)
+    
+    With fd
+        .Title = dialogTitle
+        .AllowMultiSelect = False
+        
+        If .Show = -1 Then
+            PickFolder = .SelectedItems(1)
+        Else
+            PickFolder = ""
+        End If
+    End With
+
+End Function
+
+Function IsScenarioTable(wdTable As Object) As Boolean
+
+    Dim headerText As String
+    
+    On Error GoTo NotMatch
+    
+    headerText = ""
+    headerText = headerText & "|" & CleanWordText(wdTable.Cell(1, 1).Range.Text)
+    headerText = headerText & "|" & CleanWordText(wdTable.Cell(1, 2).Range.Text)
+    headerText = headerText & "|" & CleanWordText(wdTable.Cell(1, 3).Range.Text)
+    headerText = headerText & "|" & CleanWordText(wdTable.Cell(1, 4).Range.Text)
+    
+    headerText = LCase(headerText)
+    
+    If InStr(headerText, "scenario id") > 0 _
+        And InStr(headerText, "scenario risks") > 0 _
+        And InStr(headerText, "existing rule coverage") > 0 _
+        And InStr(headerText, "comment") > 0 Then
+        IsScenarioTable = True
+    Else
+        IsScenarioTable = False
+    End If
+    
+    Exit Function
+
+NotMatch:
+    IsScenarioTable = False
+
+End Function
+
+Sub CopyWordTableToSheet(wdTable As Object, ws As Worksheet)
+
+    Dim r As Long, c As Long
+    
+    ws.Cells.Clear
+    
+    For r = 1 To wdTable.Rows.Count
+        For c = 1 To wdTable.Columns.Count
+            On Error Resume Next
+            ws.Cells(r, c).Value = CleanWordText(wdTable.Cell(r, c).Range.Text)
+            On Error GoTo 0
+        Next c
+    Next r
+    
+    ws.Rows(1).Font.Bold = True
+    ws.Columns.AutoFit
+
+End Sub
+
+Sub ExtractRatingAndCoverage(docText As String, ByRef ratingPct As String, ByRef coverageRating As String)
+
+    Dim re As Object
+    Dim matches As Object
+    
+    docText = Replace(docText, vbCr, " ")
+    docText = Replace(docText, vbLf, " ")
+    docText = Replace(docText, Chr(13), " ")
+    docText = Replace(docText, Chr(7), " ")
+    docText = NormalizeSpaces(docText)
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = False
+    re.IgnoreCase = True
+    
+    ' Format 1:
+    ' suggested rating would be (75%). Therefore, Substantial coverage
+    ' suggested rating would be 75%. Therefore, Substantial coverage
+    re.Pattern = "suggested\s+rating\s+would\s+be\s*\(?\s*([0-9]+(?:\.[0-9]+)?%)\s*\)?\s*\.?\s*therefore[, ]*\s*(Extensive\s+coverage|Substantial\s+coverage|Moderate\s+coverage|Limited\s+coverage|No\s+coverage)"
+    
+    If re.Test(docText) Then
+        Set matches = re.Execute(docText)
+        ratingPct = matches(0).SubMatches(0)
+        coverageRating = NormalizeSpaces(matches(0).SubMatches(1))
+        Exit Sub
+    End If
+    
+    ' Format 2:
+    ' suggested rating would be Extensive Coverage (100%)
+    ' suggested rating would be Extensive Coverage 100%
+    re.Pattern = "suggested\s+rating\s+would\s+be\s*(Extensive\s+coverage|Substantial\s+coverage|Moderate\s+coverage|Limited\s+coverage|No\s+coverage)\s*\(?\s*([0-9]+(?:\.[0-9]+)?%)\s*\)?"
+    
+    If re.Test(docText) Then
+        Set matches = re.Execute(docText)
+        coverageRating = NormalizeSpaces(matches(0).SubMatches(0))
+        ratingPct = matches(0).SubMatches(1)
+        Exit Sub
+    End If
+    
+    ratingPct = ""
+    coverageRating = ""
+
+End Sub
+
+Function WasFileProcessed(ws As Worksheet, fileName As String, fileModifiedDate As Date, ByVal fileSize As Long) As Boolean
+
+    Dim lastRow As Long
+    Dim i As Long
+    Dim loggedDate As Variant
+    Dim loggedSize As Variant
+    
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    
+    For i = 2 To lastRow
+        
+        If LCase(Trim(CStr(ws.Cells(i, 1).Value))) = LCase(Trim(fileName)) Then
+            
+            loggedDate = ws.Cells(i, 2).Value
+            loggedSize = ws.Cells(i, 3).Value
+            
+            If IsDate(loggedDate) And IsNumeric(loggedSize) Then
+                If CDate(loggedDate) = fileModifiedDate And CLng(loggedSize) = fileSize Then
+                    WasFileProcessed = True
+                    Exit Function
+                End If
+            End If
+            
+        End If
+        
+    Next i
+    
+    WasFileProcessed = False
+
+End Function
+
+Sub LogProcessedFile(ws As Worksheet, fileName As String, fileModifiedDate As Date, ByVal fileSize As Long, outputSheetName As String, statusText As String)
+
+    Dim nextRow As Long
+    
+    nextRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row + 1
+    
+    ws.Cells(nextRow, 1).Value = fileName
+    ws.Cells(nextRow, 2).Value = fileModifiedDate
+    ws.Cells(nextRow, 3).Value = fileSize
+    ws.Cells(nextRow, 4).Value = Now
+    ws.Cells(nextRow, 5).Value = outputSheetName
+    ws.Cells(nextRow, 6).Value = statusText
+    
+    ws.Columns.AutoFit
+
+End Sub
+
+Function GetAvailableOutputPath(folderPath As String, baseName As String, extension As String) As String
+
+    Dim testPath As String
+    Dim counter As Long
+    
+    testPath = folderPath & baseName & "." & extension
+    counter = 1
+    
+    Do While Dir(testPath) <> ""
+        counter = counter + 1
+        testPath = folderPath & baseName & "_" & counter & "." & extension
+    Loop
+    
+    GetAvailableOutputPath = testPath
+
+End Function
+
+Function GetLeadingNumber(fileName As String) As String
+
+    Dim re As Object
+    Dim matches As Object
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = False
+    re.IgnoreCase = True
+    
+    re.Pattern = "^\d+(?:\.\d+)?"
+    
+    If re.Test(fileName) Then
+        Set matches = re.Execute(fileName)
+        GetLeadingNumber = matches(0).Value
+    Else
+        GetLeadingNumber = ""
+    End If
+
+End Function
+
+Function CleanWordText(txt As String) As String
+
+    txt = Replace(txt, Chr(13), "")
+    txt = Replace(txt, Chr(7), "")
+    txt = Replace(txt, vbCr, "")
+    txt = Replace(txt, vbLf, " ")
+    txt = Trim(txt)
+    
+    CleanWordText = NormalizeSpaces(txt)
+
+End Function
+
+Function NormalizeSpaces(txt As String) As String
+
+    Dim re As Object
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Pattern = "\s+"
+    
+    NormalizeSpaces = Trim(re.Replace(txt, " "))
+
+End Function
+
+Function GetOrCreateSheet(wb As Workbook, sheetName As String) As Worksheet
+
+    On Error Resume Next
+    Set GetOrCreateSheet = wb.Worksheets(sheetName)
+    On Error GoTo 0
+    
+    If GetOrCreateSheet Is Nothing Then
+        Set GetOrCreateSheet = wb.Worksheets.Add(Before:=wb.Worksheets(1))
+        GetOrCreateSheet.Name = sheetName
+    End If
+
+End Function
+
+Function MakeValidSheetName(sheetName As String) As String
+
+    sheetName = Replace(sheetName, "\", "")
+    sheetName = Replace(sheetName, "/", "")
+    sheetName = Replace(sheetName, "?", "")
+    sheetName = Replace(sheetName, "*", "")
+    sheetName = Replace(sheetName, "[", "")
+    sheetName = Replace(sheetName, "]", "")
+    sheetName = Replace(sheetName, ":", "")
+    
+    If Len(sheetName) > 31 Then sheetName = Left(sheetName, 31)
+    
+    MakeValidSheetName = sheetName
+
+End Function
+
+Function GetUniqueSheetName(wb As Workbook, baseName As String) As String
+
+    Dim testName As String
+    Dim i As Long
+    
+    testName = baseName
+    i = 1
+    
+    Do While SheetExists(wb, testName)
+        i = i + 1
+        testName = Left(baseName, 31 - Len("_" & i)) & "_" & i
+    Loop
+    
+    GetUniqueSheetName = testName
+
+End Function
+
+Function SheetExists(wb As Workbook, sheetName As String) As Boolean
+
+    Dim ws As Worksheet
+    
+    On Error Resume Next
+    Set ws = wb.Worksheets(sheetName)
+    On Error GoTo 0
+    
+    SheetExists = Not ws Is Nothing
+
+End Function
