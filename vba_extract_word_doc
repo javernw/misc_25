@@ -1,3 +1,54 @@
+Function WasFileProcessed(ws As Worksheet, fileName As String, fileModifiedDate As Date, fileSize As Double) As Boolean
+
+    Dim lastRow As Long
+    Dim i As Long
+    Dim loggedDate As Variant
+    Dim loggedSize As Variant
+    
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    
+    For i = 2 To lastRow
+        
+        If LCase(Trim(CStr(ws.Cells(i, 1).Value))) = LCase(Trim(fileName)) Then
+            
+            loggedDate = ws.Cells(i, 2).Value
+            loggedSize = ws.Cells(i, 3).Value
+            
+            If IsDate(loggedDate) And IsNumeric(loggedSize) Then
+                If CDate(loggedDate) = fileModifiedDate And CDbl(loggedSize) = fileSize Then
+                    WasFileProcessed = True
+                    Exit Function
+                End If
+            End If
+            
+        End If
+        
+    Next i
+    
+    WasFileProcessed = False
+
+End Function
+
+
+Sub LogProcessedFile(ws As Worksheet, fileName As String, fileModifiedDate As Date, fileSize As Double, outputSheetName As String, statusText As String)
+
+    Dim nextRow As Long
+    
+    nextRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row + 1
+    
+    ws.Cells(nextRow, 1).Value = fileName
+    ws.Cells(nextRow, 2).Value = fileModifiedDate
+    ws.Cells(nextRow, 3).Value = fileSize
+    ws.Cells(nextRow, 4).Value = Now
+    ws.Cells(nextRow, 5).Value = outputSheetName
+    ws.Cells(nextRow, 6).Value = statusText
+    
+    ws.Columns.AutoFit
+
+End Sub
+
+LogProcessedFile wsProcessed, fileName, fileModifiedDate, FileLen(fullPath), sheetName, statusText
+
 Sub ExtractRatingAndCoverage(docText As String, ByRef ratingPct As String, ByRef coverageRating As String)
 
     Dim re As Object
