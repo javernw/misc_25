@@ -1,3 +1,158 @@
+Option Explicit
+
+Sub AppendAllSheetsIntoOne()
+
+    Dim filePath As Variant
+    Dim sourceWb As Workbook
+    Dim ws As Worksheet
+    Dim wsAppend As Worksheet
+    
+    Dim nextRow As Long
+    Dim lastRow As Long
+    Dim lastCol As Long
+    Dim copyRange As Range
+    Dim headerCopied As Boolean
+    
+    filePath = Application.GetOpenFilename( _
+        FileFilter:="Excel Files (*.xlsx; *.xlsm; *.xls), *.xlsx; *.xlsm; *.xls", _
+        Title:="Select the Excel workbook containing the sheets to append")
+    
+    If filePath = False Then
+        MsgBox "No file selected. Macro cancelled.", vbExclamation
+        Exit Sub
+    End If
+    
+    Set sourceWb = Workbooks.Open(CStr(filePath))
+    
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    sourceWb.Worksheets("Appended Tables").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    Set wsAppend = sourceWb.Worksheets.Add(Before:=sourceWb.Worksheets(1))
+    wsAppend.Name = "Appended Tables"
+    
+    nextRow = 1
+    headerCopied = False
+    
+    For Each ws In sourceWb.Worksheets
+        
+        If ws.Name <> wsAppend.Name _
+            And ws.Name <> "Coverage Summary" _
+            And ws.Name <> "Processed Files" Then
+            
+            lastRow = GetLastUsedRow(ws)
+            lastCol = GetLastUsedCol(ws)
+            
+            If lastRow > 0 And lastCol > 0 Then
+                
+                If headerCopied = False Then
+                    wsAppend.Cells(nextRow, 1).Value = "Source Sheet"
+                    ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol)).Copy wsAppend.Cells(nextRow, 2)
+                    nextRow = nextRow + 1
+                    headerCopied = True
+                End If
+                
+                If lastRow >= 2 Then
+                    Set copyRange = ws.Range(ws.Cells(2, 1), ws.Cells(lastRow, lastCol))
+                    
+                    wsAppend.Range(wsAppend.Cells(nextRow, 1), wsAppend.Cells(nextRow + copyRange.Rows.Count - 1, 1)).Value = ws.Name
+                    copyRange.Copy wsAppend.Cells(nextRow, 2)
+                    
+                    nextRow = nextRow + copyRange.Rows.Count
+                End If
+                
+            End If
+            
+        End If
+        
+    Next ws
+    
+    wsAppend.Rows(1).Font.Bold = True
+    wsAppend.Columns.AutoFit
+    
+    sourceWb.Save
+    
+    MsgBox "All sheets appended into 'Appended Tables'.", vbInformation
+
+End Sub
+
+Function GetLastUsedRow(ws As Worksheet) As Long
+
+    Dim lastCell As Range
+    
+    On Error Resume Next
+    Set lastCell = ws.Cells.Find(What:="*", _
+                                 After:=ws.Cells(1, 1), _
+                                 LookIn:=xlFormulas, _
+                                 LookAt:=xlPart, _
+                                 SearchOrder:=xlByRows, _
+                                 SearchDirection:=xlPrevious)
+    On Error GoTo 0
+    
+    If lastCell Is Nothing Then
+        GetLastUsedRow = 0
+    Else
+        GetLastUsedRow = lastCell.Row
+    End If
+
+End Function
+
+Function GetLastUsedCol(ws As Worksheet) As Long
+
+    Dim lastCell As Range
+    
+    On Error Resume Next
+    Set lastCell = ws.Cells.Find(What:="*", _
+                                 After:=ws.Cells(1, 1), _
+                                 LookIn:=xlFormulas, _
+                                 LookAt:=xlPart, _
+                                 SearchOrder:=xlByColumns, _
+                                 SearchDirection:=xlPrevious)
+    On Error GoTo 0
+    
+    If lastCell Is Nothing Then
+        GetLastUsedCol = 0
+    Else
+        GetLastUsedCol = lastCell.Column
+    End If
+
+End Function
+
+Sub ExtractRatingAndCoverage(docText As String, ByRef ratingPct As String, ByRef coverageRating As String)
+
+    Dim re As Object
+    Dim matches As Object
+    
+    docText = Replace(docText, vbCr, " ")
+    docText = Replace(docText, vbLf, " ")
+    docText = Replace(docText, Chr(13), " ")
+    docText = Replace(docText, Chr(7), " ")
+    docText = NormalizeSpaces(docText)
+    
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = False
+    re.IgnoreCase = True
+    
+    ' Looks specifically for:
+    ' suggested rating would be (75%). Therefore, Substantial coverage
+    re.Pattern = "suggested\s+rating\s+would\s+be\s*\(([0-9]+(?:\.[0-9]+)?%)\).*?therefore[, ]*\s*(Extensive\s+coverage|Substantial\s+coverage|Moderate\s+coverage|Limited\s+coverage|No\s+coverage)"
+    
+    If re.Test(docText) Then
+        Set matches = re.Execute(docText)
+        ratingPct = matches(0).SubMatches(0)
+        coverageRating = NormalizeSpaces(matches(0).SubMatches(1))
+    Else
+        ratingPct = ""
+        coverageRating = ""
+    End If
+
+End Sub
+
+
+
+
 ' Prompt user for source folder
 sourceFolder = PickFolder("Select the folder containing the Word documents")
 
