@@ -1,3 +1,17 @@
+I’m documenting a Jupyter notebook. For the code cell below, write a brief step-by-step explanation of what the cell does.
+
+Requirements:
+- Explain the logic in the order it happens
+- Use 3–6 short bullet points
+- Focus on the purpose of each major step, not every single line
+- Mention the final output or result of the cell
+- Keep it simple enough for someone reviewing the notebook later
+- Do not rewrite the code
+
+Code cell:
+[paste code here]
+
+
 I’m working in a Jupyter notebook and need brief documentation for each cell.
 
 For the following code cell:
