@@ -1,0 +1,163 @@
+Option Explicit
+
+Sub InsertImagesInCellsByID()
+
+    Dim ws As Worksheet
+    Dim idColRange As Range
+    Dim imgColRange As Range
+    Dim idCol As Long
+    Dim imgCol As Long
+    Dim folderPath As String
+    Dim fileName As String
+    Dim filePath As String
+    Dim lookupID As String
+    Dim lastRow As Long
+    Dim r As Long
+    Dim modeChoice As VbMsgBoxResult
+    Dim insertedCount As Long
+    Dim skippedCount As Long
+    Dim missingCount As Long
+    Dim matched As Boolean
+    
+    Set ws = ActiveSheet
+    
+    'Ask user to select ID column
+    On Error Resume Next
+    Set idColRange = Application.InputBox( _
+        Prompt:="Select any cell in the ID column.", _
+        Title:="Select ID Column", _
+        Type:=8)
+    On Error GoTo 0
+    
+    If idColRange Is Nothing Then Exit Sub
+    idCol = idColRange.Column
+    
+    'Ask user to select Image column
+    On Error Resume Next
+    Set imgColRange = Application.InputBox( _
+        Prompt:="Select any cell in the column where images should be inserted.", _
+        Title:="Select Image Column", _
+        Type:=8)
+    On Error GoTo 0
+    
+    If imgColRange Is Nothing Then Exit Sub
+    imgCol = imgColRange.Column
+    
+    'Ask for folder
+    With Application.FileDialog(msoFileDialogFolderPicker)
+        .Title = "Select folder containing downloaded images"
+        If .Show <> -1 Then Exit Sub
+        folderPath = .SelectedItems(1)
+    End With
+    
+    If Right(folderPath, 1) <> "\" Then folderPath = folderPath & "\"
+    
+    'Ask mode
+    modeChoice = MsgBox( _
+        "Do you want to replace existing images?" & vbCrLf & vbCrLf & _
+        "Yes = Replace existing images" & vbCrLf & _
+        "No = Fill blank image cells only", _
+        vbYesNoCancel + vbQuestion, _
+        "Insert Mode")
+    
+    If modeChoice = vbCancel Then Exit Sub
+    
+    Application.ScreenUpdating = False
+    
+    lastRow = ws.Cells(ws.Rows.Count, idCol).End(xlUp).Row
+    
+    fileName = Dir(folderPath & "*.*")
+    
+    Do While fileName <> ""
+        
+        If IsImageFile(fileName) Then
+            
+            lookupID = GetFileNameWithoutExtension(fileName)
+            filePath = folderPath & fileName
+            matched = False
+            
+            For r = 2 To lastRow 'assumes row 1 is header
+                
+                If Trim(CStr(ws.Cells(r, idCol).Value)) = lookupID Then
+                    
+                    matched = True
+                    
+                    If modeChoice = vbNo Then
+                        If CellHasContent(ws.Cells(r, imgCol)) Then
+                            skippedCount = skippedCount + 1
+                        Else
+                            InsertPictureInCell ws.Cells(r, imgCol), filePath
+                            insertedCount = insertedCount + 1
+                        End If
+                    ElseIf modeChoice = vbYes Then
+                        ws.Cells(r, imgCol).ClearContents
+                        InsertPictureInCell ws.Cells(r, imgCol), filePath
+                        insertedCount = insertedCount + 1
+                    End If
+                    
+                    Exit For
+                    
+                End If
+                
+            Next r
+            
+            If matched = False Then
+                missingCount = missingCount + 1
+            End If
+            
+        End If
+        
+        fileName = Dir
+        
+    Loop
+    
+    'Set row height to 60 for used rows
+    ws.Range(ws.Cells(2, imgCol), ws.Cells(lastRow, imgCol)).RowHeight = 60
+    
+    Application.ScreenUpdating = True
+    
+    MsgBox "Done!" & vbCrLf & vbCrLf & _
+           "Inserted/Replaced: " & insertedCount & vbCrLf & _
+           "Skipped: " & skippedCount & vbCrLf & _
+           "Images with no matching ID: " & missingCount, _
+           vbInformation
+
+End Sub
+
+Private Function IsImageFile(ByVal fileName As String) As Boolean
+
+    Dim ext As String
+    ext = LCase(Mid(fileName, InStrRev(fileName, ".") + 1))
+    
+    IsImageFile = (ext = "png" Or ext = "jpg" Or ext = "jpeg" Or ext = "bmp" Or ext = "gif")
+
+End Function
+
+Private Function GetFileNameWithoutExtension(ByVal fileName As String) As String
+
+    GetFileNameWithoutExtension = Left(fileName, InStrRev(fileName, ".") - 1)
+
+End Function
+
+Private Function CellHasContent(ByVal targetCell As Range) As Boolean
+
+    CellHasContent = Len(Trim(CStr(targetCell.Value))) > 0
+
+End Function
+
+Private Sub InsertPictureInCell(ByVal targetCell As Range, ByVal filePath As String)
+
+    'Uses Excel 365 Place in Cell behavior where supported
+    targetCell.Select
+    ActiveSheet.Pictures.Insert(filePath).Select
+    
+    With Selection
+        .Placement = xlMoveAndSize
+        .ShapeRange.LockAspectRatio = msoTrue
+        .Top = targetCell.Top
+        .Left = targetCell.Left
+        .Height = targetCell.Height
+    End With
+
+End Sub
+
