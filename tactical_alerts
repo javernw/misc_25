@@ -1,3 +1,60 @@
+# -----------------------------
+# Mixed non-SAR IDs classified as latest auto:
+# split based on ALL auto alerts for those IDs
+# -----------------------------
+
+# Get IDs that were assigned to latest_auto
+latest_auto_party_keys = mixed_non_sar_latest_auto_ids["party_key"].unique()
+
+# Go back to the original alert-level data,
+# but only keep AUTO alerts for those latest_auto IDs
+mixed_latest_auto_all_auto_alerts = df[
+    (df["party_key"].isin(latest_auto_party_keys))
+    & (df["is_auto"] == 1)
+].copy()
+
+# Roll up across ALL auto alerts for those IDs
+mixed_latest_auto_review_rollup = (
+    mixed_latest_auto_all_auto_alerts
+    .groupby("party_key")
+    .agg(
+        auto_alert_count=("party_key", "size"),
+        auto_btl_alerts=("is_btl_default", "sum"),
+        auto_human_review_alerts=("is_human_reviewed", "sum"),
+    )
+    .reset_index()
+)
+
+mixed_latest_auto_review_rollup["latest_auto_review_path"] = np.select(
+    [
+        mixed_latest_auto_review_rollup["auto_btl_alerts"].eq(
+            mixed_latest_auto_review_rollup["auto_alert_count"]
+        ),
+        mixed_latest_auto_review_rollup["auto_human_review_alerts"].gt(0),
+    ],
+    [
+        "latest_auto_closed_all_auto_alerts_btl",
+        "latest_auto_human_reviewed_any_auto_alert_non_btl",
+    ],
+    default="unknown"
+)
+
+mixed_latest_auto_closed_ids = mixed_latest_auto_review_rollup[
+    mixed_latest_auto_review_rollup["latest_auto_review_path"]
+    == "latest_auto_closed_all_auto_alerts_btl"
+].copy()
+
+mixed_latest_auto_human_reviewed_ids = mixed_latest_auto_review_rollup[
+    mixed_latest_auto_review_rollup["latest_auto_review_path"]
+    == "latest_auto_human_reviewed_any_auto_alert_non_btl"
+].copy()
+
+print("Mixed non-SAR latest auto - auto closed based on all auto alerts:",
+      mixed_latest_auto_closed_ids["party_key"].nunique())
+
+print("Mixed non-SAR latest auto - human reviewed based on all auto alerts:",
+      mixed_latest_auto_human_reviewed_ids["party_key"].nunique())
+
 
 # -----------------------------
 # Mixed non-SAR IDs classified as latest auto:
