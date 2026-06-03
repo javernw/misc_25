@@ -1,0 +1,180 @@
+import pandas as pd
+import numpy as np
+
+# -----------------------------
+# 1. Read Excel
+# -----------------------------
+file_path = "your_file.xlsx"
+sheet_name = "Sheet1"
+
+df = pd.read_excel(file_path, sheet_name=sheet_name)
+
+# -----------------------------
+# 2. Standardize column names
+# -----------------------------
+df.columns = (
+    df.columns
+    .str.strip()
+    .str.lower()
+    .str.replace(" ", "_")
+)
+
+# Expected columns:
+# party_key
+# alert_type
+# case_status
+# ml_swapped_out
+# ml_swapped_in
+# alert_status_name
+
+# -----------------------------
+# 3. Row-level flags
+# -----------------------------
+auto_alert_types = [10007, 10008]
+manual_alert_types = [100015]
+
+df["is_auto"] = df["alert_type"].isin(auto_alert_types).astype(int)
+df["is_manual"] = df["alert_type"].isin(manual_alert_types).astype(int)
+
+df["is_btl_default"] = (
+    df["alert_status_name"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .eq("btl default")
+).astype(int)
+
+df["is_human_reviewed"] = (df["is_btl_default"] == 0).astype(int)
+
+df["sar_row_flag"] = (
+    df["case_status"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .eq("sarfiled")
+).astype(int)
+
+# -----------------------------
+# 4. PARTY_KEY-level rollup
+# -----------------------------
+party_rollup = (
+    df.groupby("party_key")
+    .agg(
+        total_alerts=("party_key", "size"),
+        auto_alerts=("is_auto", "sum"),
+        manual_alerts=("is_manual", "sum"),
+        btl_alerts=("is_btl_default", "sum"),
+        human_review_alerts=("is_human_reviewed", "sum"),
+        sar_flag=("sar_row_flag", "max"),
+        ml_swapped_out_count=("ml_swapped_out", "sum"),
+        ml_swapped_in_count=("ml_swapped_in", "sum"),
+    )
+    .reset_index()
+)
+
+# -----------------------------
+# 5. Classify alert source batch
+# -----------------------------
+party_rollup["source_batch"] = np.select(
+    [
+        party_rollup["auto_alerts"].eq(party_rollup["total_alerts"]),
+        party_rollup["manual_alerts"].eq(party_rollup["total_alerts"]),
+        party_rollup["auto_alerts"].gt(0) & party_rollup["manual_alerts"].gt(0),
+    ],
+    [
+        "pure_auto",
+        "pure_manual",
+        "mixed_auto_manual",
+    ],
+    default="other"
+)
+
+# -----------------------------
+# 6. Classify review path
+# -----------------------------
+party_rollup["review_path"] = np.select(
+    [
+        party_rollup["btl_alerts"].eq(party_rollup["total_alerts"]),
+        party_rollup["human_review_alerts"].gt(0),
+    ],
+    [
+        "auto_closed_all_btl",
+        "human_reviewed",
+    ],
+    default="unknown"
+)
+
+# -----------------------------
+# 7. Main non-SAR populations
+# -----------------------------
+
+# A1. Pure auto + non-SAR + all BTL Default
+auto_closed_non_sar_ids = party_rollup[
+    (party_rollup["source_batch"] == "pure_auto")
+    & (party_rollup["sar_flag"] == 0)
+    & (party_rollup["review_path"] == "auto_closed_all_btl")
+].copy()
+
+# A2. Pure auto + non-SAR + at least one human-reviewed alert
+human_reviewed_auto_non_sar_ids = party_rollup[
+    (party_rollup["source_batch"] == "pure_auto")
+    & (party_rollup["sar_flag"] == 0)
+    & (party_rollup["review_path"] == "human_reviewed")
+].copy()
+
+# B. Pure manual + non-SAR
+manual_non_sar_ids = party_rollup[
+    (party_rollup["source_batch"] == "pure_manual")
+    & (party_rollup["sar_flag"] == 0)
+].copy()
+
+# Optional: mixed + non-SAR, kept separate
+mixed_non_sar_ids = party_rollup[
+    (party_rollup["source_batch"] == "mixed_auto_manual")
+    & (party_rollup["sar_flag"] == 0)
+].copy()
+
+# -----------------------------
+# 8. Special analysis:
+# ML swapped in + SAR flag = 1
+# -----------------------------
+swapped_in_sar_ids = party_rollup[
+    (party_rollup["ml_swapped_in_count"] > 0)
+    & (party_rollup["sar_flag"] == 1)
+].copy()
+
+# -----------------------------
+# 9. Counts summary
+# -----------------------------
+summary = pd.DataFrame({
+    "bucket": [
+        "Auto closed non-SAR IDs",
+        "Human reviewed auto non-SAR IDs",
+        "Manual non-SAR IDs",
+        "Mixed auto/manual non-SAR IDs",
+        "ML swapped-in SAR IDs",
+    ],
+    "distinct_party_key_count": [
+        auto_closed_non_sar_ids["party_key"].nunique(),
+        human_reviewed_auto_non_sar_ids["party_key"].nunique(),
+        manual_non_sar_ids["party_key"].nunique(),
+        mixed_non_sar_ids["party_key"].nunique(),
+        swapped_in_sar_ids["party_key"].nunique(),
+    ]
+})
+
+print(summary)
+
+# -----------------------------
+# 10. Optional: Export outputs
+# -----------------------------
+output_file = "party_key_breakouts.xlsx"
+
+with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+    party_rollup.to_excel(writer, sheet_name="party_rollup", index=False)
+    summary.to_excel(writer, sheet_name="summary", index=False)
+    auto_closed_non_sar_ids.to_excel(writer, sheet_name="auto_closed_non_sar", index=False)
+    human_reviewed_auto_non_sar_ids.to_excel(writer, sheet_name="auto_human_review_non_sar", index=False)
+    manual_non_sar_ids.to_excel(writer, sheet_name="manual_non_sar", index=False)
+    mixed_non_sar_ids.to_excel(writer, sheet_name="mixed_non_sar", index=False)
+    swapped_in_sar_ids.to_excel(writer, sheet_name="swapped_in_sar", index=False)
