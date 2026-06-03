@@ -1,3 +1,28 @@
+The dataset was analyzed at the PARTY_KEY level, even though the underlying data was stored at the alert level with multiple rows per customer. The goal was to categorize customers based on how their alerts were generated, handled, and ultimately resolved.
+
+First, alerts were classified as either auto-generated or manual based on the alert type. Alert types 10007 and 10008 were treated as auto alerts, while alert type 100015 was treated as manual.
+
+Next, a SAR flag was created at the PARTY_KEY level. If a customer had at least one alert with a case status of SARFiled, the customer received a SAR flag of 1. Otherwise, the customer received a SAR flag of 0. The primary analysis focused on non-SAR customers (SAR flag = 0), except for a separate analysis related to ML swapped-in alerts.
+
+Customers were then grouped into three initial categories based on the composition of their asrd tlerts:
+
+* Pure Auto: all alerts for the customer were auto-generated
+* Pure Manual: all alerts for the customer were manually generated
+* Mixed: the customer had both auto and manual alerts
+
+For the Pure Auto population, customers were further broken out based on how their alerts were handled operationally. If all auto alerts for a customer had an alert status of “BTL Default,” the customer was classified as Auto Closed by the tactical model. If at least one auto alert had a status other than “BTL Default,” the customer was classified as Human Reviewed, meaning at least one alert was reviewed by an analyst.
+
+Pure Manual customers were treated as inherently human reviewed since manual alerts are already analyst-driven and are not auto-closed by the tactical model.
+
+The Mixed population required additional logic. For these customers, the most recent alert date was used to determine the customer’s latest operational pathway. If the latest alert was auto-generated, the customer was assigned to the latest auto bucket. If the latest alert was manual, the customer was assigned to the latest manual bucket. In cases where both auto and manual alerts existed on the same latest date, auto alerts were given priority.
+
+For Mixed customers assigned to the latest auto bucket, all historical auto alerts for that customer were reviewed to determine whether the customer was fully auto-closed or human reviewed. If all historical auto alerts were “BTL Default,” the customer was classified as Auto Closed. If any historical auto alert was not “BTL Default,” the customer was classified as Human Reviewed.
+
+A separate analysis was also performed for ML swapped-in alerts. Instead of only checking whether a customer had both a swapped-in alert and a SAR somewhere in their history, the analysis specifically identified alerts where the same alert row had both ml_swapped_in = 1 and a SARFiled outcome. Distinct PARTY_KEY counts were then calculated from this subset to identify customers whose swapped-in alerts directly resulted in SARs.
+
+
+
+
 # -----------------------------
 # Mixed non-SAR IDs classified as latest auto:
 # split based on ALL auto alerts for those IDs
