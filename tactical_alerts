@@ -1,3 +1,85 @@
+# -----------------------------
+# Mixed non-SAR IDs: classify by latest alert date
+# Auto overrides manual if tied on latest date
+# -----------------------------
+
+# Convert alert_date to datetime
+df["alert_date_parsed"] = pd.to_datetime(
+    df["alert_date"],
+    format="%d-%b-%y",
+    errors="coerce"
+)
+
+# Get list of mixed non-SAR party keys
+mixed_non_sar_party_keys = mixed_non_sar_ids["party_key"].unique()
+
+# Filter raw alert-level data to only mixed non-SAR IDs
+mixed_non_sar_alerts = df[
+    df["party_key"].isin(mixed_non_sar_party_keys)
+].copy()
+
+# Get latest alert date per party key
+latest_dates = (
+    mixed_non_sar_alerts
+    .groupby("party_key", as_index=False)
+    .agg(latest_alert_date=("alert_date_parsed", "max"))
+)
+
+# Keep only alerts that occurred on each party's latest alert date
+mixed_latest_alerts = mixed_non_sar_alerts.merge(
+    latest_dates,
+    on="party_key",
+    how="inner"
+)
+
+mixed_latest_alerts = mixed_latest_alerts[
+    mixed_latest_alerts["alert_date_parsed"] == mixed_latest_alerts["latest_alert_date"]
+].copy()
+
+# Classify latest bucket
+# Auto overrides manual when both exist on the latest date
+mixed_latest_rollup = (
+    mixed_latest_alerts
+    .groupby("party_key")
+    .agg(
+        latest_alert_date=("latest_alert_date", "max"),
+        latest_auto_alerts=("is_auto", "sum"),
+        latest_manual_alerts=("is_manual", "sum"),
+    )
+    .reset_index()
+)
+
+mixed_latest_rollup["latest_source_bucket"] = np.select(
+    [
+        mixed_latest_rollup["latest_auto_alerts"] > 0,
+        mixed_latest_rollup["latest_manual_alerts"] > 0,
+    ],
+    [
+        "latest_auto",
+        "latest_manual",
+    ],
+    default="unknown"
+)
+
+# Separate datasets
+mixed_non_sar_latest_auto_ids = mixed_latest_rollup[
+    mixed_latest_rollup["latest_source_bucket"] == "latest_auto"
+].copy()
+
+mixed_non_sar_latest_manual_ids = mixed_latest_rollup[
+    mixed_latest_rollup["latest_source_bucket"] == "latest_manual"
+].copy()
+
+# Counts
+print("Mixed non-SAR IDs classified as latest auto:",
+      mixed_non_sar_latest_auto_ids["party_key"].nunique())
+
+print("Mixed non-SAR IDs classified as latest manual:",
+      mixed_non_sar_latest_manual_ids["party_key"].nunique())
+
+
+
+
 import pandas as pd
 import numpy as np
 
