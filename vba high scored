@@ -1,3 +1,90 @@
+
+Private Sub CreateTransactionSheet( _
+    wbTarget As Workbook, _
+    wsTransactions As Worksheet, _
+    ptyIDVal As Variant)
+
+    Dim wsNew As Worksheet
+    Dim lastRow As Long
+    Dim lastCol As Long
+    Dim ptyCol As Long
+    
+    Dim r As Long
+    Dim nextRow As Long
+    
+    Set wsNew = wbTarget.Worksheets.Add( _
+        After:=wbTarget.Worksheets("ReasonReview"))
+    
+    wsNew.Name = "Transaction Data"
+    
+    lastRow = wsTransactions.Cells(wsTransactions.Rows.Count, 1).End(xlUp).Row
+    lastCol = wsTransactions.Cells(1, wsTransactions.Columns.Count).End(xlToLeft).Column
+    
+    ptyCol = GetHeaderColumn(wsTransactions, "PTY_ID")
+    
+    ' Copy headers
+    wsTransactions.Rows(1).Resize(1, lastCol).Copy
+    wsNew.Range("A1").PasteSpecial xlPasteValues
+    
+    nextRow = 2
+    
+    For r = 2 To lastRow
+        
+        If wsTransactions.Cells(r, ptyCol).Value = ptyIDVal Then
+            
+            wsTransactions.Rows(r).Resize(1, lastCol).Copy
+            
+            wsNew.Cells(nextRow, 1).PasteSpecial xlPasteValues
+            
+            nextRow = nextRow + 1
+            
+        End If
+        
+    Next r
+    
+    Application.CutCopyMode = False
+    
+    FormatTransactionSheet wsNew, nextRow - 1, lastCol
+
+End Sub
+
+
+Private Sub FormatTransactionSheet( _
+    ws As Worksheet, _
+    lastRow As Long, _
+    lastCol As Long)
+
+    Dim rng As Range
+    
+    Set rng = ws.Range( _
+        ws.Cells(1, 1), _
+        ws.Cells(lastRow, lastCol))
+    
+    With rng
+        .Font.Name = "Barclays Effra"
+        .Font.Size = 10
+        .Borders.LineStyle = xlContinuous
+    End With
+    
+    With ws.Rows(1)
+        .Font.Bold = True
+        .Interior.Color = RGB(0, 112, 192)
+        .Font.Color = RGB(255, 255, 255)
+    End With
+    
+    ws.Cells.EntireColumn.AutoFit
+    
+    ws.Activate
+    
+    ActiveWindow.SplitRow = 1
+    ActiveWindow.FreezePanes = True
+    
+    ActiveWindow.DisplayGridlines = False
+
+End Sub
+
+
+
 Private Sub AddFeatureDescriptionsAsNotes( _
     wsFeature As Worksheet, _
     wsReason As Worksheet, _
