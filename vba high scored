@@ -1,3 +1,53 @@
+Private Sub FormatTransactionSheet( _
+    ws As Worksheet, _
+    lastRow As Long, _
+    lastCol As Long)
+
+    Dim rng As Range
+    Dim c As Long
+    Dim headerText As String
+    
+    Set rng = ws.Range(ws.Cells(1, 1), ws.Cells(lastRow, lastCol))
+    
+    With rng
+        .Font.Name = "Barclays Effra"
+        .Font.Size = 10
+        .Borders.LineStyle = xlContinuous
+    End With
+    
+    With ws.Rows(1)
+        .Font.Bold = True
+        .Interior.Color = RGB(0, 112, 192)
+        .Font.Color = RGB(255, 255, 255)
+    End With
+    
+    ' Format date columns based on headers ending with _DT
+    If lastRow >= 2 Then
+        For c = 1 To lastCol
+            headerText = Trim(CStr(ws.Cells(1, c).Value))
+            
+            If UCase(Right(headerText, 3)) = "_DT" Then
+                ws.Range(ws.Cells(2, c), ws.Cells(lastRow, c)).NumberFormat = "dd-mmm-yy"
+            End If
+        Next c
+    End If
+    
+    ' Add autofilter
+    If ws.AutoFilterMode Then ws.AutoFilterMode = False
+    rng.AutoFilter
+    
+    ws.Cells.EntireColumn.AutoFit
+    
+    ws.Activate
+    
+    ActiveWindow.SplitRow = 1
+    ActiveWindow.FreezePanes = True
+    
+    ActiveWindow.DisplayGridlines = False
+
+End Sub
+
+
 MsgBox "Template PTY_ID = [" & ptyIDVal & "]" & vbCrLf & _
        "Transaction PTY_ID column = " & ptyCol & vbCrLf & _
        "First transaction PTY_ID = [" & wsTransactions.Cells(2, ptyCol).Value & "]"
