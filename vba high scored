@@ -1,3 +1,9 @@
+MsgBox "Template PTY_ID = [" & ptyIDVal & "]" & vbCrLf & _
+       "Transaction PTY_ID column = " & ptyCol & vbCrLf & _
+       "First transaction PTY_ID = [" & wsTransactions.Cells(2, ptyCol).Value & "]"
+
+If Trim(CStr(wsTransactions.Cells(r, ptyCol).Value)) = Trim(CStr(ptyIDVal)) Then
+
 
 Private Sub CreateTransactionSheet( _
     wbTarget As Workbook, _
