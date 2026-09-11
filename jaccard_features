@@ -49,3 +49,44 @@ abs_jaccard_10, abs_overlap_10 = jaccard_analysis(
     abs_shap_ranked,
     10
 )
+
+from itertools import combinations
+import pandas as pd
+
+def compare_jaccard_across_n(j10, j20, j30):
+
+    typologies = j10.index.tolist()
+
+    rows = []
+
+    # Unique pairs only
+    for typ1, typ2 in combinations(typologies, 2):
+
+        rows.append({
+            "Typology_1": typ1,
+            "Typology_2": typ2,
+            "Top_10_Jaccard": j10.loc[typ1, typ2],
+            "Top_20_Jaccard": j20.loc[typ1, typ2],
+            "Top_30_Jaccard": j30.loc[typ1, typ2]
+        })
+
+    return pd.DataFrame(rows)
+
+abs_jaccard_comparison = compare_jaccard_across_n(
+    abs_jaccard_top10,
+    abs_jaccard_top20,
+    abs_jaccard_top30
+)
+
+abs_jaccard_comparison
+
+
+abs_jaccard_comparison[
+    ["Top_10_Jaccard", "Top_20_Jaccard", "Top_30_Jaccard"]
+] = (
+    abs_jaccard_comparison[
+        ["Top_10_Jaccard", "Top_20_Jaccard", "Top_30_Jaccard"]
+    ]
+    .round(3)
+)
+
