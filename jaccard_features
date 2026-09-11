@@ -1,0 +1,51 @@
+def jaccard_analysis(ranked_df, top_n):
+
+    top_features = ranked_df[
+        ranked_df["rank"] <= top_n
+    ]
+
+    feature_sets = (
+        top_features
+        .groupby("Typology")["feature_name"]
+        .apply(set)
+        .to_dict()
+    )
+
+    typologies = list(feature_sets.keys())
+
+    jaccard = pd.DataFrame(
+        index=typologies,
+        columns=typologies,
+        dtype=float
+    )
+
+    overlap = pd.DataFrame(
+        index=typologies,
+        columns=typologies,
+        dtype=int
+    )
+
+    for typ1 in typologies:
+        for typ2 in typologies:
+
+            set1 = feature_sets[typ1]
+            set2 = feature_sets[typ2]
+
+            intersection = len(set1 & set2)
+            union = len(set1 | set2)
+
+            jaccard.loc[typ1, typ2] = (
+                intersection / union
+                if union > 0
+                else 0
+            )
+
+            overlap.loc[typ1, typ2] = intersection
+
+    return jaccard, overlap
+
+
+abs_jaccard_10, abs_overlap_10 = jaccard_analysis(
+    abs_shap_ranked,
+    10
+)
