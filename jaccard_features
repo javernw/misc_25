@@ -90,3 +90,503 @@ abs_jaccard_comparison[
     .round(3)
 )
 
+
+Top feature by typology 
+
+import matplotlib.pyplot as plt
+
+def plot_top_features(
+    ranked_df,
+    typology,
+    top_n=10,
+    metric="mean_positive_shap"
+):
+    
+    plot_df = (
+        ranked_df[
+            ranked_df["Typology"] == typology
+        ]
+        .nsmallest(top_n, "rank")
+        .sort_values(metric, ascending=True)
+    )
+
+    plt.figure(figsize=(10, 6))
+
+    plt.barh(
+        plot_df["feature_name"],
+        plot_df[metric]
+    )
+
+    plt.xlabel("Mean Positive SHAP")
+    plt.ylabel("Feature")
+    plt.title(
+        f"Top {top_n} Positive SHAP Features\n{typology}"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_top_features(
+    positive_shap_ranked,
+    typology="Rapid Funds Movement",
+    top_n=10
+)
+
+for typology in positive_shap_ranked["Typology"].unique():
+    
+    plot_top_features(
+        positive_shap_ranked,
+        typology=typology,
+        top_n=10
+    )
+
+
+Jaccard Heatmap
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_jaccard_heatmap(
+    jaccard_df,
+    title="Jaccard Similarity"
+):
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    im = ax.imshow(jaccard_df.values)
+
+    # Axis labels
+    ax.set_xticks(
+        np.arange(len(jaccard_df.columns))
+    )
+    
+    ax.set_yticks(
+        np.arange(len(jaccard_df.index))
+    )
+
+    ax.set_xticklabels(
+        jaccard_df.columns,
+        rotation=45,
+        ha="right"
+    )
+
+    ax.set_yticklabels(
+        jaccard_df.index
+    )
+
+    # Add values inside cells
+    for i in range(len(jaccard_df.index)):
+        for j in range(len(jaccard_df.columns)):
+            
+            value = jaccard_df.iloc[i, j]
+
+            ax.text(
+                j,
+                i,
+                f"{value:.2f}",
+                ha="center",
+                va="center"
+            )
+
+    plt.colorbar(
+        im,
+        label="Jaccard Similarity"
+    )
+
+    plt.title(title)
+
+    plt.tight_layout()
+    plt.show()
+
+plot_jaccard_heatmap(
+    positive_jaccard_top20,
+    title="Top 20 Feature Similarity — Positive SHAP"
+)
+
+
+— Jaccard similarity across Top N
+
+def prepare_jaccard_trend(comparison_df):
+
+    trend_df = comparison_df.melt(
+        id_vars=[
+            "Typology_1",
+            "Typology_2"
+        ],
+        value_vars=[
+            "Top_10_Jaccard",
+            "Top_20_Jaccard",
+            "Top_30_Jaccard"
+        ],
+        var_name="Top_N",
+        value_name="Jaccard"
+    )
+
+    trend_df["Top_N"] = (
+        trend_df["Top_N"]
+        .str.extract(r"(\d+)")
+        .astype(int)
+    )
+
+    trend_df["Typology_Pair"] = (
+        trend_df["Typology_1"]
+        + " vs "
+        + trend_df["Typology_2"]
+    )
+
+    return trend_df
+
+positive_jaccard_trend = prepare_jaccard_trend(
+    positive_jaccard_comparison
+)
+
+def plot_jaccard_trend(trend_df):
+
+    plt.figure(figsize=(11, 7))
+
+    for pair, group in trend_df.groupby(
+        "Typology_Pair"
+    ):
+
+        group = group.sort_values("Top_N")
+
+        plt.plot(
+            group["Top_N"],
+            group["Jaccard"],
+            marker="o",
+            label=pair
+        )
+
+    plt.xlabel("Top N Features")
+    plt.ylabel("Jaccard Similarity")
+
+    plt.xticks([10, 20, 30])
+
+    plt.title(
+        "Feature Similarity Across Top N"
+    )
+
+    plt.legend(
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_jaccard_trend(
+    positive_jaccard_trend
+)
+
+reduce pairs
+top_pairs = (
+    positive_jaccard_comparison
+    .nlargest(
+        5,
+        "Top_20_Jaccard"
+    )[
+        ["Typology_1", "Typology_2"]
+    ]
+)
+
+top_pair_names = (
+    top_pairs["Typology_1"]
+    + " vs "
+    + top_pairs["Typology_2"]
+).tolist()
+
+trend_filtered = (
+    positive_jaccard_trend[
+        positive_jaccard_trend[
+            "Typology_Pair"
+        ].isin(top_pair_names)
+    ]
+)
+
+plot_jaccard_trend(
+    trend_filtered
+)
+
+
+Mean Positive SHAP vs % Positive
+
+def plot_magnitude_vs_prevalence(
+    positive_df,
+    typology,
+    label_top_n=10
+):
+
+    plot_df = positive_df[
+        positive_df["Typology"] == typology
+    ].copy()
+
+    plt.figure(figsize=(11, 7))
+
+    plt.scatter(
+        plot_df["pct_positive"],
+        plot_df["mean_positive_shap"],
+        alpha=0.7
+    )
+
+    # Only label the existing Top N ranked features
+    labels_df = plot_df[
+        plot_df["rank"] <= label_top_n
+    ]
+
+    for _, row in labels_df.iterrows():
+
+        plt.annotate(
+            row["feature_name"],
+            (
+                row["pct_positive"],
+                row["mean_positive_shap"]
+            ),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=8
+        )
+
+    plt.xlabel(
+        "% of SARs with Positive SHAP"
+    )
+
+    plt.ylabel(
+        "Mean Positive SHAP"
+    )
+
+    plt.title(
+        f"Positive SHAP Magnitude vs Prevalence\n{typology}"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_magnitude_vs_prevalence(
+    positive_shap_ranked,
+    "Rapid Funds Movement",
+		10
+)
+
+
+Feature x typology heatmap
+
+top_n = 10
+
+top_features = (
+    positive_shap_ranked[
+        positive_shap_ranked["rank"] <= top_n
+    ]["feature_name"]
+    .unique()
+)
+
+feature_typology_data = (
+    positive_shap_ranked[
+        positive_shap_ranked[
+            "feature_name"
+        ].isin(top_features)
+    ]
+)
+
+feature_typology_matrix = (
+    feature_typology_data
+    .pivot(
+        index="feature_name",
+        columns="Typology",
+        values="mean_positive_shap"
+    )
+    .fillna(0)
+)
+
+def plot_feature_typology_heatmap(
+    matrix
+):
+
+    fig, ax = plt.subplots(
+        figsize=(12, 10)
+    )
+
+    im = ax.imshow(
+        matrix.values,
+        aspect="auto"
+    )
+
+    ax.set_xticks(
+        np.arange(len(matrix.columns))
+    )
+
+    ax.set_xticklabels(
+        matrix.columns,
+        rotation=45,
+        ha="right"
+    )
+
+    ax.set_yticks(
+        np.arange(len(matrix.index))
+    )
+
+    ax.set_yticklabels(
+        matrix.index
+    )
+
+    plt.colorbar(
+        im,
+        label="Mean Positive SHAP"
+    )
+
+    plt.title(
+        "Top Feature Contributions Across Typologies"
+    )
+
+    plt.xlabel("Typology")
+    plt.ylabel("Feature")
+
+    plt.tight_layout()
+    plt.show()
+
+plot_feature_typology_heatmap(
+    feature_typology_matrix
+)
+
+if using rank
+
+top_n = 10
+
+top_features = (
+    positive_shap_ranked[
+        positive_shap_ranked["rank"] <= top_n
+    ]["feature_name"]
+    .unique()
+)
+
+rank_typology_data = (
+    positive_shap_ranked[
+        positive_shap_ranked["feature_name"].isin(top_features)
+    ]
+)
+
+rank_typology_matrix = (
+    rank_typology_data
+    .pivot(
+        index="feature_name",
+        columns="Typology",
+        values="rank"
+    )
+)
+
+rank_typology_matrix.head()
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_rank_heatmap(matrix):
+
+    fig, ax = plt.subplots(
+        figsize=(12, 10)
+    )
+
+    im = ax.imshow(
+        matrix.values,
+        aspect="auto",
+        cmap="viridis_r"
+    )
+
+    ax.set_xticks(
+        np.arange(len(matrix.columns))
+    )
+
+    ax.set_xticklabels(
+        matrix.columns,
+        rotation=45,
+        ha="right"
+    )
+
+    ax.set_yticks(
+        np.arange(len(matrix.index))
+    )
+
+    ax.set_yticklabels(
+        matrix.index
+    )
+
+    plt.colorbar(
+        im,
+        label="Feature Rank"
+    )
+
+    plt.title(
+        "Feature Rank Across Typologies"
+    )
+
+    plt.xlabel("Typology")
+    plt.ylabel("Feature")
+
+    plt.tight_layout()
+    plt.show()
+
+or this to out the rank number in the cell
+
+def plot_rank_heatmap(matrix):
+
+    fig, ax = plt.subplots(
+        figsize=(12, 10)
+    )
+
+    im = ax.imshow(
+        matrix.values,
+        aspect="auto",
+        cmap="viridis_r"
+    )
+
+    ax.set_xticks(
+        np.arange(len(matrix.columns))
+    )
+
+    ax.set_xticklabels(
+        matrix.columns,
+        rotation=45,
+        ha="right"
+    )
+
+    ax.set_yticks(
+        np.arange(len(matrix.index))
+    )
+
+    ax.set_yticklabels(
+        matrix.index
+    )
+
+    # Add rank to each cell
+    for i in range(len(matrix.index)):
+        for j in range(len(matrix.columns)):
+
+            value = matrix.iloc[i, j]
+
+            if pd.notna(value):
+                ax.text(
+                    j,
+                    i,
+                    f"{int(value)}",
+                    ha="center",
+                    va="center",
+                    fontsize=8
+                )
+
+    plt.colorbar(
+        im,
+        label="Feature Rank"
+    )
+
+    plt.title(
+        "Positive SHAP Feature Rank Across Typologies"
+    )
+
+    plt.xlabel("Typology")
+    plt.ylabel("Feature")
+
+    plt.tight_layout()
+    plt.show()
+
+plot_rank_heatmap(
+    rank_typology_matrix
+)
+
