@@ -693,3 +693,132 @@ plot_top10_abs_shap(
     "Rapid Funds Movement",
     show_desc=True
 )
+
+
+
+import matplotlib.pyplot as plt
+
+def plot_top_features(
+    ranked_df,
+    typology,
+    shap_type="positive",
+    top_n=10,
+    label_col="feat_desc"
+):
+    """
+    Plot Top-N SHAP features for a selected typology.
+
+    Parameters
+    ----------
+    ranked_df : DataFrame
+        Either positive_shap_ranked or abs_shap_ranked.
+
+    typology : str
+        Typology to plot.
+
+    shap_type : str
+        "positive" or "absolute".
+
+    top_n : int
+        Number of top-ranked features to display.
+
+    label_col : str
+        Column to use for feature labels.
+        Recommended: "feat_desc"
+        Alternative: "feature_name"
+    """
+
+    # -----------------------------------
+    # 1. Determine metric based on view
+    # -----------------------------------
+    if shap_type.lower() == "positive":
+
+        metric = "mean_positive_shap"
+        x_label = "Mean Positive SHAP"
+        view_title = "Positive SHAP"
+
+    elif shap_type.lower() in ["absolute", "abs"]:
+
+        metric = "mean_abs_shap"
+        x_label = "Mean Absolute SHAP"
+        view_title = "Absolute SHAP"
+
+    else:
+        raise ValueError(
+            "shap_type must be 'positive' or 'absolute'"
+        )
+
+    # -----------------------------------
+    # 2. Basic validation
+    # -----------------------------------
+    if metric not in ranked_df.columns:
+        raise ValueError(
+            f"'{metric}' was not found in the DataFrame. "
+            f"Check that the correct ranked DataFrame was supplied."
+        )
+
+    if label_col not in ranked_df.columns:
+        raise ValueError(
+            f"'{label_col}' was not found in the DataFrame."
+        )
+
+    if typology not in ranked_df["Typology"].unique():
+        raise ValueError(
+            f"Typology '{typology}' was not found."
+        )
+
+    # -----------------------------------
+    # 3. Select Top N
+    # -----------------------------------
+    plot_df = (
+        ranked_df[
+            (ranked_df["Typology"] == typology)
+            & (ranked_df["rank"] <= top_n)
+        ]
+        .copy()
+        .sort_values(metric, ascending=True)
+    )
+
+    # -----------------------------------
+    # 4. Plot
+    # -----------------------------------
+    plt.figure(figsize=(10, 6))
+
+    plt.barh(
+        plot_df[label_col],
+        plot_df[metric]
+    )
+
+    plt.xlabel(x_label)
+    plt.ylabel("Feature")
+
+    plt.title(
+        f"Top {top_n} Features — {typology}\n{view_title}"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_top_features(
+    ranked_df=abs_shap_ranked,
+    typology="Rapid Funds Movement",
+    shap_type="absolute",
+    top_n=10
+)
+
+plot_top_features(
+    ranked_df=positive_shap_ranked,
+    typology="Rapid Funds Movement",
+    shap_type="positive",
+    top_n=10,
+    label_col="feature_name"
+)
+
+for typology in abs_shap_ranked["Typology"].unique():
+
+    plot_top_features(
+        ranked_df=abs_shap_ranked,
+        typology=typology,
+        shap_type="absolute",
+        top_n=10
+    )
