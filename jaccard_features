@@ -590,3 +590,106 @@ plot_rank_heatmap(
     rank_typology_matrix
 )
 
+
+
+import matplotlib.pyplot as plt
+
+def plot_top10_abs_shap(ranked_df, typology):
+
+    plot_df = (
+        ranked_df[
+            ranked_df["Typology"] == typology
+        ]
+        .nsmallest(10, "rank")
+        .sort_values("mean_abs_shap", ascending=True)
+    )
+
+    plt.figure(figsize=(10, 6))
+
+    plt.barh(
+        plot_df["feature_name"],
+        plot_df["mean_abs_shap"]
+    )
+
+    plt.xlabel("Mean Absolute SHAP")
+    plt.ylabel("Feature")
+    plt.title(
+        f"Top 10 Features — {typology}\nAbsolute SHAP"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_top10_abs_shap(
+    abs_shap_ranked,
+    "Rapid Funds Movement"
+)
+
+for each type
+for typology in abs_shap_ranked["Typology"].unique():
+
+    plot_top10_abs_shap(
+        abs_shap_ranked,
+        typology
+    )
+
+
+import matplotlib.pyplot as plt
+
+def plot_top10_abs_shap(
+    ranked_df,
+    typology,
+    show_desc=True,
+    show_rank=True
+):
+
+    plot_df = (
+        ranked_df[
+            ranked_df["Typology"] == typology
+        ]
+        .nsmallest(10, "rank")
+        .sort_values("mean_abs_shap", ascending=True)
+        .copy()
+    )
+
+    # Build feature label
+    if show_rank:
+        plot_df["feature_label"] = (
+            "#"
+            + plot_df["rank"].astype(int).astype(str)
+            + "  "
+            + plot_df["feature_name"]
+        )
+    else:
+        plot_df["feature_label"] = plot_df["feature_name"]
+
+    # Add description only if requested
+    if show_desc:
+        plot_df["feature_label"] = (
+            plot_df["feature_label"]
+            + "\n"
+            + plot_df["feat_desc"].fillna("")
+        )
+
+    plt.figure(figsize=(13, 8))
+
+    plt.barh(
+        plot_df["feature_label"],
+        plot_df["mean_abs_shap"]
+    )
+
+    plt.xlabel("Mean Absolute SHAP")
+    plt.ylabel("Feature")
+
+    plt.title(
+        f"Top 10 Features — {typology}\nAbsolute SHAP"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+plot_top10_abs_shap(
+    abs_shap_ranked,
+    "Rapid Funds Movement",
+    show_desc=True
+)
