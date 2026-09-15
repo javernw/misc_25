@@ -1,3 +1,5 @@
+
+
 def jaccard_analysis(ranked_df, top_n):
 
     top_features = ranked_df[
@@ -822,3 +824,40 @@ for typology in abs_shap_ranked["Typology"].unique():
         shap_type="absolute",
         top_n=10
     )
+
+from scipy.cluster.hierarchy import linkage, dendrogram
+from scipy.spatial.distance import squareform
+import matplotlib.pyplot as plt
+
+distance_matrix = 1 - avg_jaccard_matrix
+
+condensed_distance = squareform(
+    distance_matrix.values,
+    checks=False
+)
+
+linkage_matrix = linkage(
+    condensed_distance,
+    method="average"
+)
+
+plt.figure(figsize=(10, 6))
+
+dendrogram(
+    linkage_matrix,
+    labels=avg_jaccard_matrix.index,
+    leaf_rotation=45
+)
+
+plt.ylabel("Average Jaccard Distance")
+plt.xlabel("Typology")
+
+plt.title(
+    "Typology Clusters Based on Feature Similarity\n"
+    "Average Across Top 10, 20 and 30 Features"
+)
+
+plt.tight_layout()
+plt.show()
+
+
