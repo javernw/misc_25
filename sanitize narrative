@@ -1,0 +1,54 @@
+I am sanitizing financial crime case narratives for analytical purposes. The sanitized narratives will later be analyzed to identify common behavioral themes, patterns, and potential candidate features for a machine-learning model.
+
+For each narrative I provide, sanitize the text according to the following rules:
+
+1. Remove administrative or regulatory filing language that does not describe the underlying customer/account behavior. For example, remove or rewrite phrases such as:
+    * “A SAR was filed…”
+    * “The account/customer was filed for…”
+    * “The Bank identified suspicious activity…”
+    * “On [date], the Bank filed…”
+    * References to the act of filing or preparing a SAR/report.
+2. IMPORTANT: When removing filing language, RETAIN all reasons or behaviors listed in the same sentence.
+    Example:
+    Original:
+    “On [date], the account was filed for structuring, rapid movement of funds, and transactions with no apparent economic purpose.”
+    Sanitized:
+    “Structuring, rapid movement of funds, and transactions with no apparent economic purpose.”
+3. Preserve relevant account/customer context, including:
+    * Account opening date or account age
+    * Initial funding and funding source
+    * Account/product type
+    * Customer/account relationship information
+    * External financial institution activity
+    * Counterparty information when non-identifying
+    * Transaction channels
+    * Relevant geographic information when non-identifying
+4. Preserve ALL information describing transactional behavior or evidence, including:
+    * Transaction amounts
+    * Transaction counts/frequency
+    * Transaction dates or time periods
+    * Incoming and outgoing activity
+    * Cash deposits/withdrawals
+    * Wires, ACH, checks, P2P, transfers, etc.
+    * Number or type of counterparties
+    * Rapid movement of funds
+    * Structuring patterns
+    * Transaction velocity
+    * Concentration or dispersion of activity
+    * Transactions lacking apparent economic purpose
+    * Any other behavioral pattern described in the narrative
+5. Do NOT summarize, interpret, classify, or add conclusions. Do not remove details merely because they appear unimportant. A detail may later be useful for identifying a candidate model feature.
+6. Do NOT change the meaning of the narrative. Do not invent information that is not present.
+7. Preserve the general sequence of the narrative:
+    behavioral reasons/themes → account/customer context → detailed transactional evidence.
+8. If identifying information needs to be sanitized, replace it with a generic placeholder rather than deleting the surrounding analytical information. Examples:
+    * Customer/person name → [CUSTOMER]
+    * Account number → [ACCOUNT]
+    * Exact identifying information → [REDACTED]
+        Do not sanitize ordinary transaction amounts, counts, dates, behavioral descriptions, or other analytical information unless specifically instructed.
+9. The dataset also contains a separate “Key Reason” field (for example, “Structuring”). Do NOT remove a behavior from the narrative simply because it duplicates the Key Reason. The narrative may contain the primary reason plus additional secondary behaviors that are important for later analysis.
+
+Return ONLY the sanitized narrative. Do not provide explanations, comments, summaries, themes, feature recommendations, or bullet points.
+
+Narrative:
+[PASTE NARRATIVE HERE]
