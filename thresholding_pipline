@@ -1,0 +1,265 @@
+"""Iteration 3 thresholding reconstructed from nine notebook screenshots.
+Prerequisites: Spark DataFrame pd_monthly_end (PARTY_KEY, scoring_date, xgb_scr)
+and scalar threshold_3rd_perc, computed in upstream notebook cells.
+"""
+import builtins
+import math
+from collections import deque
+from pyspark.sql import functions as F
+
+# CONFIGURATION (as displayed in screenshot)
+SUPPRESSION_MONTHS = 3
+BAND_LOWER = 3600  # 4500 * 80%
+BAND_MID = 4000    # 5000 * 80%
+BAND_UPPER = 4400  # 5500 * 80%
+# Combined Consumer + Business Cards allocation is already 80% of total Ops capacity.
+# Do NOT scale this band again by 0.03 / 0.8 (that was for Business-only).
+print(f"Using combined Cards 80% allocation: [{BAND_LOWER:,} - {BAND_UPPER:,}]")
+
+lower_threshold = threshold_3rd_perc
+print(f"\nLower Threshold (3rd percentile of SAR scores): {lower_threshold:.4f}")
+pd_monthly_end.cache()
+eom_dates = sorted([row['scoring_date'] for row in pd_monthly_end.select('scoring_date').distinct().collect()])
+print(f"\nMonth-end dates found: {[str(d) for d in eom_dates]}")
+
+# PART 1: SEQUENTIAL SUPPRESSION ENGINE
+# For each month: build suppression pool from actual net alerts in previous N months;
+# subtract suppressed parties; append only actual net alerts to rolling history.
+def compute_net_alerts_sequential(pd_monthly_end, eom_dates, threshold, suppression_months=3):
+    """Return monthly gross, suppressed, net alerts and warm-up indicator."""
+    monthly_candidates = {}
+    for date in eom_dates:
+        candidates = [
+            r['PARTY_KEY']
+            for r in (
+                pd_monthly_end
+                .filter(F.col('scoring_date') == date)
+                .filter(F.col('xgb_scr') >= threshold)
+                .select('PARTY_KEY')
+                .collect()
+            )
+        ]
+        monthly_candidates[date] = set(candidates)
+
+    alert_history = deque(maxlen=suppression_months)
+    results = []
+    for i, current_date in enumerate(eom_dates):
+        suppression_pool = set().union(*alert_history) if alert_history else set()
+        candidates = monthly_candidates[current_date]
+        net_alerted = candidates - suppression_pool
+        suppressed = candidates & suppression_pool
+        gross_count = len(candidates)
+        suppressed_count = len(suppressed)
+        net_count = len(net_alerted)
+        warm_up = i < suppression_months
+        results.append({
+            'scoring_date': current_date,
+            'gross_alerts': gross_count,
+            'suppressed_count': suppressed_count,
+            'net_alerts': net_count,
+            'warm_up_month': warm_up,
+        })
+        alert_history.append(net_alerted)
+    return results
+
+
+def results_to_df(results):
+    """Convert list of monthly result dictionaries to a Spark DataFrame."""
+    return spark.createDataFrame(results).orderBy('scoring_date')
+
+
+def avg_net_alerts_at_threshold(pd_monthly_end, eom_dates, threshold,
+                                suppression_months=3, exclude_warmup=True):
+    """Return average monthly net alerts at threshold (excluding warm-up by default)."""
+    results = compute_net_alerts_sequential(
+        pd_monthly_end, eom_dates, threshold, suppression_months
+    )
+    filtered = [r for r in results if not r['warm_up_month']] if exclude_warmup else results
+    if not filtered:
+        return 0.0
+    return builtins.sum(r['net_alerts'] for r in filtered) / len(filtered)
+
+# PART 2: ALERT VOLUME AT LOWER THRESHOLD
+print('\n' + '=' * 60)
+print('PART 2 - Alert volume at lower threshold (corrected suppression)')
+print('=' * 60)
+lower_results = compute_net_alerts_sequential(
+    pd_monthly_end, eom_dates, lower_threshold, SUPPRESSION_MONTHS
+)
+df_lower_volume = results_to_df(lower_results)
+df_lower_volume.show(truncate=False)
+non_warm_lower = [r for r in lower_results if not r['warm_up_month']]
+avg_net_lower = (
+    builtins.sum(r['net_alerts'] for r in non_warm_lower) / len(non_warm_lower)
+    if non_warm_lower else 0.0
+)
+print(f'Avg net alerts/month at LOWER threshold (excl. warm-up): {avg_net_lower:,.0f}')
+
+# PART 3: UPPER THRESHOLD - COARSE PERCENTILE SCAN AND BINARY SEARCH
+print('\n' + '=' * 60)
+print('PART 3 - Finding upper threshold (corrected suppression)')
+print('=' * 60)
+print(f'\nPass 1 - Coarse search | Target band: [{BAND_LOWER:,} - {BAND_UPPER:,}]')
+# Visible active range in screenshot: 98.000% through 99.990% in 0.010% steps.
+percentile_steps = [i / 100000 for i in range(98000, 100000, 10)]
+candidate_thresholds = pd_monthly_end.approxQuantile('xgb_scr', percentile_steps, 0.000005)
+coarse_results = []
+for pct, thresh in zip(percentile_steps, candidate_thresholds):
+    avg_net = avg_net_alerts_at_threshold(
+        pd_monthly_end, eom_dates, thresh, SUPPRESSION_MONTHS
+    )
+    coarse_results.append((pct, float(thresh), float(avg_net)))
+    print(f'  Percentile {pct*100:.4f}% threshold={thresh:.5f} avg_net_alerts={avg_net:,.0f}')
+
+# Bracket around the target midpoint, rather than the lower edge of the band.
+bracket_lo = None
+bracket_hi = None
+for (p1, t1, a1), (p2, t2, a2) in zip(coarse_results, coarse_results[1:]):
+    if (a1 - BAND_MID) * (a2 - BAND_MID) <= 0:
+        bracket_lo, bracket_hi = t1, t2
+        break
+if bracket_lo is None:
+    max_avg = max(a for _, _, a in coarse_results)
+    min_avg = min(a for _, _, a in coarse_results)
+    raise ValueError(
+        f'Could not bracket BAND_MID={BAND_MID}. '
+        f'Coarse scan avg_net range was [{min_avg:,.0f}, {max_avg:,.0f}]. '
+        'If everything is BELOW, start scan at LOWER percentiles (e.g., 99.00%). '
+        'If everything is ABOVE, scan HIGHER percentiles (closer to 100%).'
+    )
+print(f'\nBracket found: [{bracket_lo:.5f}, {bracket_hi:.5f}]')
+
+print('\nPass 2 - Binary search within bracket:')
+lo, hi = bracket_lo, bracket_hi
+tolerance = builtins.max(1, int((BAND_UPPER - BAND_LOWER) / 2))
+desired_threshold_precision = 1e-5
+max_iter = math.ceil(math.log2((hi - lo) / desired_threshold_precision)) if hi > lo else 0
+max_iter = builtins.max(5, builtins.min(max_iter, 12))
+best_threshold = None
+best_avg_net = None
+best_distance = float('inf')
+# NEW: retain candidates for monthly-stability comparison.
+search_candidates = {float(t) for _, t, avg in coarse_results if BAND_LOWER <= avg <= BAND_UPPER}
+print(f'  Alert tolerance: +/-{tolerance:,} alerts around BAND_MID={BAND_MID:,}')
+print(f'  Threshold precision target: {desired_threshold_precision}')
+print(f'  Max iterations: {max_iter}')
+
+for i in range(max_iter):
+    mid = (lo + hi) / 2
+    avg_net = avg_net_alerts_at_threshold(
+        pd_monthly_end, eom_dates, mid, SUPPRESSION_MONTHS
+    )
+    search_candidates.add(float(mid))
+    distance = builtins.abs(avg_net - BAND_MID)
+    print(f'  Iter {i+1:02d} threshold={mid:.5f} avg_net_alerts={avg_net:,.0f} distance={distance:,.0f}')
+    if distance < best_distance:
+        best_distance = distance
+        best_threshold = mid
+        best_avg_net = avg_net
+    if distance <= tolerance:
+        print('  Converged based on alert tolerance.')
+        break
+    if builtins.abs(hi - lo) <= desired_threshold_precision:
+        print('  Converged based on threshold precision.')
+        break
+    if avg_net > BAND_MID:
+        lo = mid  # raise threshold to reduce alerts
+    else:
+        hi = mid  # lower threshold to increase alerts
+
+# NEW: compare acceptable candidates on monthly overload before choosing the final threshold.
+# Nearby candidates are checked even if binary search stopped early.
+if best_threshold is not None:
+    step = builtins.max(desired_threshold_precision, (bracket_hi - bracket_lo) / 10)
+    search_candidates.update(
+        builtins.max(bracket_lo, builtins.min(bracket_hi, best_threshold + k * step))
+        for k in range(-5, 6)
+    )
+
+candidate_reviews = []
+for candidate in sorted(search_candidates):
+    monthly = compute_net_alerts_sequential(
+        pd_monthly_end, eom_dates, candidate, SUPPRESSION_MONTHS
+    )
+    valid = [r['net_alerts'] for r in monthly if not r['warm_up_month']]
+    if not valid:
+        continue
+    avg = builtins.sum(valid) / len(valid)
+    if not (BAND_LOWER <= avg <= BAND_UPPER):
+        continue
+    candidate_reviews.append({
+        'threshold': candidate,
+        'avg_net': avg,
+        'months_above': builtins.sum(n > BAND_UPPER for n in valid),
+        'excess_alerts': builtins.sum(builtins.max(0, n - BAND_UPPER) for n in valid),
+        'months_below': builtins.sum(n < BAND_LOWER for n in valid),
+        'months_in_band': builtins.sum(BAND_LOWER <= n <= BAND_UPPER for n in valid),
+        'max_net': builtins.max(valid),
+    })
+
+if not candidate_reviews:
+    raise ValueError('No tested threshold has average monthly net alerts within the target band.')
+
+# Rank: (1) fewest overloaded months, (2) smallest overload,
+# (3) fewest months below band, (4) closest average to midpoint.
+candidate_reviews.sort(key=lambda r: (
+    r['months_above'], r['excess_alerts'], r['months_below'],
+    builtins.abs(r['avg_net'] - BAND_MID)
+))
+selected = candidate_reviews[0]
+upper_threshold = selected['threshold']
+best_avg_net = selected['avg_net']
+best_distance = builtins.abs(best_avg_net - BAND_MID)
+
+print('\nTop 10 candidate thresholds (monthly stability ranking):')
+for r in candidate_reviews[:10]:
+    print(f"  threshold={r['threshold']:.5f} avg={r['avg_net']:,.0f} "
+          f"above={r['months_above']} excess={r['excess_alerts']:,} "
+          f"below={r['months_below']} in_band={r['months_in_band']} "
+          f"max_month={r['max_net']:,}")
+print(f'\nSelected Upper Threshold: {upper_threshold:.5f}')
+print(f'Average net alerts at this threshold: {best_avg_net:,.0f}')
+print(f'Distance from BAND_MID: {best_distance:,.0f}')
+
+# PART 3b: MONTHLY BREAKDOWN AT FINAL UPPER THRESHOLD
+print('\n' + '=' * 60)
+print('PART 3b - Monthly breakdown at final upper threshold')
+print('=' * 60)
+final_results = compute_net_alerts_sequential(
+    pd_monthly_end, eom_dates, upper_threshold, SUPPRESSION_MONTHS
+)
+df_final = results_to_df(final_results)
+df_final_display = df_final.withColumn(
+    'net_within_band', F.col('net_alerts').between(BAND_LOWER, BAND_UPPER)
+)
+df_final_display.show(truncate=False)
+
+# Reconstructed continuation: not visible in supplied images.
+valid_months = [r for r in final_results if not r['warm_up_month']]
+total_months = len(valid_months)
+months_in_band = builtins.sum(BAND_LOWER <= r['net_alerts'] <= BAND_UPPER for r in valid_months)
+final_avg_net = builtins.sum(r['net_alerts'] for r in valid_months) / total_months if total_months else 0.0
+avg_suppressed = builtins.sum(r['suppressed_count'] for r in valid_months) / total_months if total_months else 0.0
+
+# SUMMARY
+print('\n' + '=' * 60)
+print('THRESHOLDING SUMMARY')
+print('=' * 60)
+print(f'  Alert volume band:         [{BAND_LOWER:,} - {BAND_UPPER:,}]')
+print('  Population:                Consumer + Business Cards (80% allocation)')
+print(f'  Suppression window:        {SUPPRESSION_MONTHS} months')
+print('  Suppression basis:         Accounts ACTUALLY ALERTED')
+print()
+print(f'  Lower Threshold (3% SAR miss rate): {lower_threshold:.5f}')
+print(f'  Upper Threshold (net alerts within band): {upper_threshold:.5f}')
+print()
+print(f'  Valid threshold range: [{lower_threshold:.5f}, {upper_threshold:.5f}]')
+print()
+print('  At upper threshold (excl. warm-up months):')
+print(f'    Months inside band:      {months_in_band} / {total_months}')
+print(f'    Avg net alerts/month:    {final_avg_net:,.0f}')
+print(f'    Avg suppressed/month:    {avg_suppressed:,.0f}')
+print(f"    Months above band:       {selected['months_above']}")
+print(f"    Months below band:       {selected['months_below']}")
+print(f"    Maximum monthly alerts:  {selected['max_net']:,}")
+print('=' * 60)
